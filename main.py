@@ -28,7 +28,7 @@ MATRIX_CONFIG = {
         "is_squeeze": True, 
         "modifier": 1.05,    
         "strat_cn_stable": "核能远期长协价格稳定。当前股价已部分透支算力中心PPA预期，保持底仓观望，不盲目追高。",
-        "strat_cn_squeeze": "算力中心核能黑洞刚性爆发，公用事业去库超预期。周一开盘以右侧动量策略强行加仓有色/核能标地。"
+        "strat_cn_squeeze": "算力中心核能黑洞刚性爆发，公用事业去库超预期。周一开盘以右侧动量策略强行加仓有色/核能标的。"
     },
     "SILVER": {
         "ticker": "SI=F",
@@ -80,7 +80,6 @@ class MultiAssetCloudAgent:
         logger.info("===== GLOBAL MULTI-ASSET WATCHTOWER INITIATED =====")
         
         cn_body = ""
-        en_body = ""
         squeezed_assets_cn = []
         
         for asset_key, cfg in MATRIX_CONFIG.items():
@@ -94,9 +93,21 @@ class MultiAssetCloudAgent:
                 cn_body += f"品种标签: {cfg['name_cn']}\n- 状态: 🔴 因源头数据校验溃败触发核心熔断，该策略已被强行拦截保护。\n\n"
                 continue
                 
+            # 1. 精算公允目标价
             target_price = round(live_price * cfg["modifier"], 4)
             potential_upside = round(((target_price / live_price) - 1) * 100, 2)
             self.log_to_history_database(asset_key, live_price, target_price)
+            
+            # 2. ⚡【硬核新增】智能动态吸筹购买区间解算 (Smart Buy-Zone Matrix)
+            # 稳定标的采用左侧安全边际折价吸筹；挤仓标的放宽上限允许右侧追击
+            if cfg["is_squeeze"]:
+                buy_zone_low = round(live_price * 0.98, 2)
+                buy_zone_high = round(target_price * 1.01, 2)
+                buy_zone_str = f"${buy_zone_low} - ${buy_zone_high} USD (右侧逼空追击区间)"
+            else:
+                buy_zone_low = round(target_price * 0.96, 2)
+                buy_zone_high = round(target_price * 1.01, 2)
+                buy_zone_str = f"${buy_zone_low} - ${buy_zone_high} USD (极限安全边际低吸位)"
             
             if cfg["is_squeeze"]:
                 squeezed_assets_cn.append(cfg["name_cn"].split(" (")[0])
@@ -104,21 +115,21 @@ class MultiAssetCloudAgent:
             status_cn = "⚠️ 一级资产挤仓 / 战略多头埋伏" if cfg["is_squeeze"] else "🌿 震荡区间 / 保持左侧定力"
             strat_cn = cfg["strat_cn_squeeze"] if cfg["is_squeeze"] else cfg["strat_cn_stable"]
             
+            # 将建议购买区间精准缝合进最终文稿
             cn_body += f"""品种标签: {cfg['name_cn']}
 - 当前策略评级: {status_cn}
 - 盘面即时价格: ${live_price} USD
 - 模型公允估值: ${target_price} USD (资本损益空间: {potential_upside}%)
+- 🎯 建议购买区间: {buy_zone_str}
 - 核心基本面遥测: {cfg['telemetry_cn']}
 - 交易台决策指引: {strat_cn}
 \n"""
 
-        # 动态解算大局观执行摘要
         if squeezed_assets_cn:
-            global_summary_cn = f"当前矩阵中 [{', '.join(squeezed_assets_cn)}] 已强行进入刚性挤仓通道。总指挥部战略建议：本周核心资金应向上述多头资产进行重兵倾斜，执行多头右侧追击；其余稳定期标的严禁追涨，死锁账面现金防御阵线。"
+            global_summary_cn = f"当前矩阵中 [{', '.join(squeezed_assets_cn)}] 已强行进入刚性挤仓通道。总指挥部战略建议：本周核心资金应向上述多头资产进行重兵倾斜，参考下方[建议购买区间]执行多头右侧追击；其余稳定期标的严禁追涨，死锁账面现金防御阵线。"
         else:
-            global_summary_cn = "当前全线监控标的均处于宏观公允震荡区间。总指挥部战略建议：全体品种坚决执行既定的左侧网格低吸蓝图，死死按住现金长矛，静待系统性恐慌下砸坑。"
+            global_summary_cn = "当前全线监控标的均处于宏观公允震荡区间。总指挥部战略建议：全体品种坚决执行既定的左侧网格低吸蓝图，参考下方[建议购买区间]以限价单静待系统性恐慌下砸坑。"
 
-        # 组装最终文本（在最头部冷酷锁死包含"AI"安全关键词的工业级红头文件抬头）
         total_payload_text = f"""🏛️ [AI QUANTAMENTAL EXECUTIVE PROTOCOL]
 报告时间 (北京时间): {self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}
 ============================================================
@@ -132,7 +143,6 @@ Powered by Production Quantamental Engine 10.0 • Confidential"""
 
         print(total_payload_text)
         
-        # 🚀 采用 100% 稳妥的飞书标准文本规范重新通电发货
         if self.webhook_url:
             try:
                 feishu_payload = {
