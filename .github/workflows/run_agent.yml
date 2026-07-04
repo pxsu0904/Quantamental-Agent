@@ -2,43 +2,46 @@ name: Global Copper Quantamental Agent Auto-Scheduler
 
 on:
   schedule:
-    - cron: '45 0 * * 1-5'  # 🌅 早上 08:45（UTC 00:45）早盘定调前瞻
-    - cron: '30 6 * * 1-5'  # ⚔️ 下午 14:30（UTC 06:30）尾盘锁定伏击
+    - cron: '45 0 * * 1-5'  # 🌅 早上 08:45（北京时间）早盘定调前瞻
+    - cron: '30 6 * * 1-5'  # ⚔️ 下午 14:30（北京时间）尾盘锁定伏击
   workflow_dispatch:        # 保持手动点火开关
 
 jobs:
   execute-intelligence-pipeline:
     runs-on: ubuntu-latest
 
-    # 🔑 极其核心：赋予 Actions 显式的读写权限，否则它没权把记账后的 CSV 推回仓库
     permissions:
-      contents: write
+      contents: write       # 赋予 Actions 显式的写权限，允许回写 CSV 时序账本
 
     steps:
-    - name: 1. 克隆并检出最新代码仓库
-      uses: actions/checkout@v3
+      - name: 1. 克隆并检出最新代码仓库
+        uses: actions/checkout@v3
 
-    - name: 2. 部署云端纯净 Python 3.10 环境
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+      - name: 2. 部署云端纯净 Python 3.10 环境
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
 
-    - name: 3. 一键配置华尔街量化工具箱环境依赖
-      run: |
-        python -m pip install --upgrade pip
-        pip install yfinance pandas requests
+      - name: 3. 一键配置华尔街量化工具箱环境依赖
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-    - name: 4. 全权点火启动多资产量化基本面核心引擎
-      run: python main.py
-      env:
-        ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+      - name: 4. 全权点火启动多资产量化基本面核心引擎
+        env:
+          # 🔐 核心数据通信与认知大脑环境变量注入网关
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          ENABLE_LLM: "true"
+        run: python main.py
 
-    - name: 5. 跨时序自我提交（Git Auto-Commit）—— 将今日数据同步写回仓库账本
-      run: |
-        git config --global user.name "Quantamental-Bot"
-        git config --global user.email "bot@quant.com"
-        # 检查是否有新的历史记账数据产生，有则强行推回仓库
-        if [ -f asset_history.csv ]; then
+      - name: 5. 跨时序自我提交 (Git Auto-Commit) —— 将今日数据同步返回仓库账本
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Action Bot"
           git add asset_history.csv
-          git commit -m "🏛️ [Automated Data Sync] Logged matrix telemetry to time-series database" && git push || echo "No new database changes detected."
-        fi
+          # 仅在有账本异动时执行原子提交，严防空提交报错
+          git diff --cached --quiet || git commit -m "📊 [SYSTEM TIME-SERIES DATALOG] Sync rolling asset database entries."
+          git push
