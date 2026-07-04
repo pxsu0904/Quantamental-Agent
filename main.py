@@ -19,7 +19,7 @@ CONFIG = {
     "TC_RC": 4.50,
     "AI_CAPEX_GROWTH": 35.0,
     "BASE_DAILY_BURN": 70000.0,
-    "WEBHOOK_URL": os.environ.get("ALERT_WEBHOOK_URL", "") # 允许从环境变量隐式读取警报通道
+    "WEBHOOK_URL": os.environ.get("ALERT_WEBHOOK_URL", "") # 从环境变量隐式读取警报通道
 }
 
 class CloudAgent:
@@ -49,27 +49,42 @@ class CloudAgent:
         if target_price > 6.0: target_price = round(target_price * 0.98, 4)
         potential_upside = round(((target_price / live_price) - 1) * 100, 2)
         
-        # 5. 生成核心自然语言文本
-        report_content = f"""
-🏛️ 【AI 投研大脑实时简报】
+        # 5. 【核心优化】生成中文版报告文本
+        report_cn = f"""🏛️ 【AI 投研大脑实时简报】
 ⏰ 审计时间 (北京时间): {self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}
 █==================================================█
 📈 交易所显性库存环比变动率: {stock_velocity}% 
-📈 国际铜精矿 Spot TC/RC 加工费: ${CONFIG['TC_RC']} USD/Ton
-📈 AI 修正后全球实体库存维持天数: {true_safety_days} Days
-🔮 华尔街即时价格: ${live_price} USD/lb ➔ 模型 30 天公允目标价: ${target_price} USD/lb
+📈 国际铜精矿 Spot TC/RC 加工费: ${CONFIG['TC_RC']} USD/公吨
+📈 AI 修正后全球实体库存维持天数: {true_safety_days} 天
+🔮 华尔街即时价格: ${live_price} USD/磅 ➔ 模型 30 天公允目标价: ${target_price} USD/磅
 █==================================================█
 🎯 最终临盘开枪指令:
 ➡️ {'🚨 触发高斜率逼空红线！周一开盘以限价单全额重兵伏击上游核心资产。' if stock_velocity < -5.0 and CONFIG['TC_RC'] < 5.0 and potential_upside > 0 else '🌿 价格回归公允估值区间。死死按住账上现金长矛，继续保持左侧猎人定力，死等系统性恐慌砸盘跌停坑。'}
+█==================================================█"""
+
+        # 6. 【核心优化】生成英文版报告文本 (专业黑话完全对齐)
+        report_en = f"""🏛️ 【AI QUANTAMENTAL INTELLIGENCE BRIEFING】
+⏰ Audit Time (Beijing Time): {self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}
 █==================================================█
-"""
+📈 Global Visible Stock MoM Change: {stock_velocity}% 
+📈 Spot TC/RC Processing Fee: ${CONFIG['TC_RC']} USD/Ton
+📈 AI-Adjusted Global Safety Runway: {true_safety_days} Days
+🔮 Live Wall Street Price: ${live_price} USD/lb ➔ Model 30-Day Fair Target: ${target_price} USD/lb
+█==================================================█
+🎯 Actionable Trading Desk Guidance:
+➡️ {'🚨 LEVEL 1 ASSET SQUEEZE DETECTED! Deploy 100% limit orders to ambush upstream core assets on Monday morning.' if stock_velocity < -5.0 and CONFIG['TC_RC'] < 5.0 and potential_upside > 0 else '🌿 STABLE RANGE. Maintain current cash defensive line and wait for systemic liquidity panic shock.'}
+█==================================================█"""
+
+        # 7. 强行合拢：先中文，空两行，后英文
+        report_content = report_cn + "\n\n" + "🌐 ================================================== 🌐" + "\n\n" + report_en
+        
         print(report_content)
         
-        # 🚀 自动化警报多端推送模块
+        # 🚀 自动化警报推送
         if CONFIG["WEBHOOK_URL"]:
             try:
                 requests.post(CONFIG["WEBHOOK_URL"], json={"text": report_content})
-                logger.info("Notification successfully pushed to Telegram/WeChat/Discord desk.")
+                logger.info("Bilingual notification successfully pushed to飛書 desk.")
             except Exception as e:
                 logger.error(f"Failed to push alert: {e}")
                 
