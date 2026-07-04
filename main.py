@@ -24,7 +24,6 @@ CONFIG = {
 
 class CloudAgent:
     def __init__(self):
-        # 采用最新标准语法强制校准北京时间
         self.beijing_time = datetime.now(timezone.utc) + timedelta(hours=8)
         
     def run_pipeline(self):
@@ -49,7 +48,7 @@ class CloudAgent:
         if target_price > 6.0: target_price = round(target_price * 0.98, 4)
         potential_upside = round(((target_price / live_price) - 1) * 100, 2)
         
-        # 5. 【核心优化】生成中文版报告文本
+        # 5. 生成中文版报告文本
         report_cn = f"""🏛️ 【AI 投研大脑实时简报】
 ⏰ 审计时间 (北京时间): {self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}
 █==================================================█
@@ -62,7 +61,7 @@ class CloudAgent:
 ➡️ {'🚨 触发高斜率逼空红线！周一开盘以限价单全额重兵伏击上游核心资产。' if stock_velocity < -5.0 and CONFIG['TC_RC'] < 5.0 and potential_upside > 0 else '🌿 价格回归公允估值区间。死死按住账上现金长矛，继续保持左侧猎人定力，死等系统性恐慌砸盘跌停坑。'}
 █==================================================█"""
 
-        # 6. 【核心优化】生成英文版报告文本 (专业黑话完全对齐)
+        # 6. 生成英文版报告文本
         report_en = f"""🏛️ 【AI QUANTAMENTAL INTELLIGENCE BRIEFING】
 ⏰ Audit Time (Beijing Time): {self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}
 █==================================================█
@@ -75,16 +74,21 @@ class CloudAgent:
 ➡️ {'🚨 LEVEL 1 ASSET SQUEEZE DETECTED! Deploy 100% limit orders to ambush upstream core assets on Monday morning.' if stock_velocity < -5.0 and CONFIG['TC_RC'] < 5.0 and potential_upside > 0 else '🌿 STABLE RANGE. Maintain current cash defensive line and wait for systemic liquidity panic shock.'}
 █==================================================█"""
 
-        # 7. 强行合拢：先中文，空两行，后英文
+        # 7. 中英对照合拢
         report_content = report_cn + "\n\n" + "🌐 ================================================== 🌐" + "\n\n" + report_en
-        
         print(report_content)
         
-        # 🚀 自动化警报推送
+        # 🚀 【神级修复】强制对齐飞书专用的规范数据载荷格式 (Strict JSON Schema)
         if CONFIG["WEBHOOK_URL"]:
             try:
-                requests.post(CONFIG["WEBHOOK_URL"], json={"text": report_content})
-                logger.info("Bilingual notification successfully pushed to飛書 desk.")
+                feishu_payload = {
+                    "msg_type": "text",
+                    "content": {
+                        "text": report_content
+                    }
+                }
+                response = requests.post(CONFIG["WEBHOOK_URL"], json=feishu_payload)
+                logger.info(f"Feishu server backbone response: {response.text}")
             except Exception as e:
                 logger.error(f"Failed to push alert: {e}")
                 
