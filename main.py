@@ -11,10 +11,41 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - 
 logger = logging.getLogger("CommodityWatchtower")
 
 # ====================================================================================
-# 🎛️ CONFIGURATION CENTRAL (全球大宗商品立体投研参数配置中台 - 全解耦量化底座)
+# 🎛️ CONFIGURATION CENTRAL (全球大宗商品多衍生工具参数配置中台 - 全解耦量化底座)
 # ====================================================================================
-NOTIFIER_CONFIG = {"max_retries": 3, "retry_delay": 1, "timeout": 10}
-PRICE_CONFIG = {"decimals": 4, "display_decimals": 2}
+HTTP_CONFIG = {
+    "timeout_market": 8,       # 国内聚合行情接口网络容忍阈值
+    "timeout_notify": 10,      # 消息网关推送网络容忍阈值
+    "timeout_llm": 15,         # 大模型接口认知解算容忍超时阈值
+    "max_retries": 3,          # 外部网关突发失败后最大自愈重试次数
+    "retry_delay": 1,          # 自愈重试基础时间间隔 (秒)
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
+
+PRICE_CONFIG = {
+    "decimals": 4,             # 数据库底层高精度时序价格存储小数位
+    "display_decimals": 2      # 前端可视化报告及显示层小数位位数
+}
+
+TENCENT_FIELDS = {
+    "PRICE": 3,
+    "CHANGE_PCT": 32
+}
+
+# 大模型接口路由配置中台
+LLM_CONFIG = {
+    "enable_llm": os.environ.get("ENABLE_LLM", "true").lower() == "true", # 默认开启智能归因分析开关
+    "api_key": os.environ.get("LLM_API_KEY", ""),
+    "base_url": os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1"),
+    "model": os.environ.get("LLM_MODEL", "deepseek-chat")
+}
+
+# 全球宏观核心定价动能因子雷达字典
+MACRO_TICKERS = {
+    "DXY": {"ticker": "DX-Y.NYB", "name": "美元指数 (DXY)"},
+    "OIL": {"ticker": "CL=F", "name": "WTI原油 (工业能源成本)"},
+    "VIX": {"ticker": "^VIX", "name": "美股恐慌指数 (VIX风险情绪)"}
+}
 
 STATIC_FALLBACK_PRICES = {
     "HG=F": 6.2240,   "512400.SS": 1.25,   "601899.SS": 18.50,
@@ -87,69 +118,106 @@ class MultiAssetCloudAgent:
         self.history_file = "asset_history.csv"
         self.batch_log_buffer = [] 
         
-        # 📈 可观测性指标统计面板
-        self.stale_assets_count = 0
-        self.blocked_assets_count = 0 
-        self.exceptional_summary_list = [] 
+        # 可观测性指标度量中台
+        self.stale_assets_count = 0              
+        self.blocked_assets_count = 0            
+        self.cn_yfinance_fallback_count = 0      
+        self.exceptional_summary_list = []      
         
-        # ⚙️ 中优先级优化2：引入单次初始化内存数据缓存中台（Memory Cache Base），杜绝重复磁盘 I/O
+        self._cn_batch_pool = {}
+        self._macro_live_factors_text = "未激活/暂无数据"  
+        
         self._cached_history_df = pd.DataFrame()
         self._load_and_cache_ledger()
-        
-        # 启动配置强核验
         self._validate_incoming_configuration()
+        self._pre_fetch_cn_market_batch()
 
     def _load_and_cache_ledger(self):
-        """单次拨通磁盘，将时序账本常驻内存。若破损则自动执行断灾隔离与备份重建"""
+        """单次加载历史快照常驻内存，捕获破损异常并自动完成隔离自愈"""
         if os.path.exists(self.history_file):
             try:
                 self._cached_history_df = pd.read_csv(self.history_file, encoding="utf-8-sig")
             except Exception:
-                # ⚙️ 高优先级优化3：集成了文件意外破损时的自动备份与逻辑重置自愈机制
-                logger.error("[DATABASE CORRUPTED] CSV data stream is unreadable. Activating isolated auto-recovery...", exc_info=True)
+                logger.error("[DATABASE EXCEPTION] CSV storage structure corrupted. Activating rolling backup strategy...", exc_info=True)
                 try:
                     bak_file = f"{self.history_file}.{int(time.time())}.bak"
                     os.rename(self.history_file, bak_file)
-                    logger.warning(f"[DISASTER RECOVERY] Damaged ledger isolated to {bak_file}. Resetting clean datastore.")
                 except Exception as ex:
-                    logger.error(f"[DISASTER RECOVERY CRITICAL] Failed to rename broken data node: {ex}", exc_info=True)
+                    logger.error(f"[DISASTER RECOVERY FAIL] Failed to rename broken file node: {ex}", exc_info=True)
                 self._cached_history_df = pd.DataFrame()
 
     def _validate_incoming_configuration(self):
-        """执行全盘配置强核验与下沉策略子字段断言 (Fail-Fast Mechanism)"""
-        logger.info("[PRE-FLIGHT] Verifying structural integrity of investment matrix...")
+        """配置参数合法性深度结构化校验 (Fail-Fast Mechanism)"""
         required_cluster_keys = ["name_cn", "telemetry_cn", "is_squeeze", "assets"]
         required_asset_keys = ["ticker", "name", "modifier", "bound", "currency", "type_label", "market"]
         
         for cluster_id, config in MATRIX_CONFIG.items():
             for k in required_cluster_keys:
-                if k not in config: raise KeyError(f"[CONFIG CRITICAL] Cluster '{cluster_id}' missing required key: '{k}'")
+                if k not in config: raise KeyError(f"[CONFIG CRITICAL] Cluster '{cluster_id}' missing key: '{k}'")
             
-            # ⚙️ 中优先级优化1：补全针对自定义策略区间内部嵌套字段的强校验
+            # ⚙️ 中优先级优化1：强行恢复对策略参数内层字典完整性的深层断言校验
             params = config.get("strategy_params", DEFAULT_STRATEGY_PARAMS)
             if "squeeze_band" not in params or "stable_band" not in params:
-                raise KeyError(f"[CONFIG CRITICAL] Cluster '{cluster_id}' strategy_params lacks required inner sub-keys.")
+                raise KeyError(f"[CONFIG CRITICAL] Cluster '{cluster_id}' strategy_params lacks required sub-keys.")
                 
             for asset_type, asset_info in config["assets"].items():
                 for ak in required_asset_keys:
-                    if ak not in asset_info: raise KeyError(f"[CONFIG CRITICAL] Asset '{cluster_id}.{asset_type}' missing operational key: '{ak}'")
-        logger.info("[PRE-FLIGHT] Configuration checks passed. Global alignment verified.")
+                    if ak not in asset_info: raise KeyError(f"[CONFIG CRITICAL] Asset '{cluster_id}.{asset_type}' missing key: '{ak}'")
+
+    def _pre_fetch_cn_market_batch(self):
+        """A股资产聚合批量单次握手引擎 (HTTP Batching Engine)
+        ⚙️ 高优先级优化5：重构废弃全局中断，升级为精准逐行解析与颗粒度自愈过滤
+        """
+        cn_tickers = []
+        for cluster in MATRIX_CONFIG.values():
+            for asset in cluster["assets"].values():
+                if asset["market"] == "CN": cn_tickers.append(asset["ticker"])
+        if not cn_tickers: return
+
+        mapped_symbols = []
+        symbol_map = {}
+        for tk in cn_tickers:
+            sym = f"sh{tk[:-3]}" if tk.endswith(".SS") else f"sz{tk[:-3]}"
+            mapped_symbols.append(sym)
+            symbol_map[sym] = tk
+
+        url = f"https://qt.gtimg.cn/q={','.join(mapped_symbols)}"
+        headers = {"User-Agent": HTTP_CONFIG["user_agent"]}
+        
+        try:
+            resp = requests.get(url, headers=headers, timeout=HTTP_CONFIG["timeout_market"])
+            text = resp.content.decode('gbk', errors='ignore')
+
+            for line in text.split('\n'):
+                if not line.strip(): continue
+                # ⚙️ 高优先级优化5：单行无匹配标的特征拦截，不破坏其余标的数据有效性
+                if "none_match" in line:
+                    logger.warning(f"[MARKET ENGINE] Partial none_match detected in segment: {line.strip()}")
+                    continue
+                if '=' in line and '~' in line:
+                    sym_part = line.split('=')[0].replace("v_", "").strip()
+                    raw_data = line.split('"')[1]
+                    parts = raw_data.split('~')
+                    if len(parts) > max(TENCENT_FIELDS.values()):
+                        orig_ticker = symbol_map.get(sym_part)
+                        if orig_ticker:
+                            live_price = round(float(parts[TENCENT_FIELDS["PRICE"]]), PRICE_CONFIG["decimals"])
+                            change_pct = round(float(parts[TENCENT_FIELDS["CHANGE_PCT"]]), PRICE_CONFIG["display_decimals"])
+                            self._cn_batch_pool[orig_ticker] = (live_price, change_pct)
+            logger.info(f"[MARKET ENGINE] Microsecond batch pipeline mapped {len(self._cn_batch_pool)} domestic assets.")
+        except Exception:
+            logger.error("[MARKET ENGINE] Tencent HTTP backbone pool connection timeout.", exc_info=True)
 
     def _get_dynamic_fallback_price(self, ticker):
-        """⚙️ 中优先级优化2：零磁盘 I/O 损耗 —— 秒级拨通高可用内存常驻缓存检索历史最近成交价"""
         if not self._cached_history_df.empty:
             try:
                 ticker_df = self._cached_history_df[self._cached_history_df["ticker"] == ticker]
-                if not ticker_df.empty:
-                    last_price = float(ticker_df.iloc[-1]["live_price"])
-                    logger.info(f"[MEMORY CACHE HIT] Retrieved historical last known price for {ticker}: ${last_price}")
-                    return last_price
+                if not ticker_df.empty: return float(ticker_df.iloc[-1]["live_price"])
             except Exception:
-                logger.error(f"[MEMORY CACHE ERROR] Query failed for token {ticker}, fallback to hard floor.", exc_info=True)
+                logger.error(f"[CACHE FAILURE] Memory tracking block index missed for {ticker}", exc_info=True)
         return STATIC_FALLBACK_PRICES.get(ticker, 100.0)
 
-    def _fetch_live_price(self, ticker):
-        """高可用级联取价通道"""
+    def _fetch_yfinance_price(self, ticker):
         ticker_obj = yf.Ticker(ticker)
         try:
             hist = ticker_obj.history(period="2d")
@@ -164,19 +232,79 @@ class MultiAssetCloudAgent:
             pass
         return self._get_dynamic_fallback_price(ticker), None, True
 
-    def _calculate_buy_zone(self, live_price, target_price, is_squeeze, params, sym):
-        """核心策略解算器"""
-        if is_squeeze:
-            buy_zone_low = round(live_price * params["squeeze_band"][0], PRICE_CONFIG["display_decimals"])
-            buy_zone_high = round(target_price * params["squeeze_band"][1], PRICE_CONFIG["display_decimals"])
-            return f"{sym}{buy_zone_low} - {sym}{buy_zone_high} (右侧动量追击位)"
-        else:
-            buy_zone_low = round(target_price * params["stable_band"][0], PRICE_CONFIG["display_decimals"])
-            buy_zone_high = round(target_price * params["stable_band"][1], PRICE_CONFIG["display_decimals"])
-            return f"{sym}{buy_zone_low} - {sym}{buy_zone_high} (左侧边际挂单位)"
+    def _fetch_live_price(self, ticker, market):
+        if market == "US": return self._fetch_yfinance_price(ticker)
+        if market == "CN":
+            if ticker in self._cn_batch_pool: return self._cn_batch_pool[ticker][0], self._cn_batch_pool[ticker][1], False
+            # 级联降级路由触发
+            self.cn_yfinance_fallback_count += 1
+            return self._fetch_yfinance_price(ticker)
+
+    def _execute_dynamic_macro_radar(self):
+        """全球宏观核心定价动能因子动态雷达扫描模块"""
+        logger.info("[MACRO RADAR] Initiating global live macro factors scanning...")
+        factor_lines = []
+        for key, info in MACRO_TICKERS.items():
+            price, change, _ = self._fetch_yfinance_price(info["ticker"])
+            change_str = f"({'+' if change and change > 0 else ''}{change}%)" if change is not None else "(--%)"
+            factor_lines.append(f"  • {info['name']}: {price} {change_str}")
+        self._macro_live_factors_text = "\n".join(factor_lines)
+
+    def _execute_llm_brain_attribution(self, raw_payload_for_ai):
+        """大模型跨资产级联归因分析中台
+        ⚙️ 高优先级优化4：加入 rstrip('/') 对齐底层根路径拼接边界边界防线
+        """
+        if not LLM_CONFIG["enable_llm"] or not LLM_CONFIG["api_key"]:
+            logger.warning("[LLM ENGINE] LLM module deactivated or API token missing. Bypassed to template engine.")
+            return None
+
+        # ⚙ = 优化点：加入大模型专属 API 请求两遍鲁棒性自愈重试回路
+        for attempt in range(2):
+            try:
+                # ⚙️ 高优先级优化4：切断末尾斜杠隐患
+                url = f"{LLM_CONFIG['base_url'].rstrip('/')}/chat/completions"
+                prompt = f"""你是一位在全球顶级对冲基金服役的资深大宗商品与有色金属量化策略总监。
+下面是今天从全球行情网关以及宏观因子雷达中聚合而来的原始快照：
+
+[宏观核心定价动能因子]:
+{self._macro_live_factors_text}
+
+[各衍生工具盘面精算明细]:
+{raw_payload_for_ai}
+
+请严格基于上述客观数据流，为投资决策层撰写一份宏观透视归因报告。
+
+要求：
+1. 结合最新的美元指数、原油以及VIX风险情绪，深入剖析其对精铜/核铀/白银/变压器资产的估值抑制或动能传导，撰写一份150字内冷酷利落的【EXECUTIVE SUMMARY (核心全局战略总结)】。
+2. 为精铜、核铀、白银、电网变压器这四个板块，结合现价与模型公允区间的级差，分别重新撰写一段具有绝对实战指导意义的【交易台决策指引】。
+3. 保持客观、严谨的行研黑话风格。输出格式必须完全对齐以下文本结构，不要夹带任何Markdown语法标记（如```或**）：
+
+核心全局战略总结 (EXECUTIVE SUMMARY):
+[动态撰写内容]
+
+各板块临盘交易台决策指引:
+■ 全球精铜资产指引: [针对性内容]
+■ 全球核铀资产指引: [针对性内容]
+■ 全球工业白银指引: [针对性内容]
+■ 电网变压器设备指引: [针对性内容]
+"""
+                headers = {"Authorization": f"Bearer {LLM_CONFIG['api_key']}", "Content-Type": "application/json"}
+                payload = {"model": LLM_CONFIG["model"], "messages": [{"role": "user", "content": prompt}], "temperature": 0.2}
+                
+                resp = requests.post(url, headers=headers, json=payload, timeout=HTTP_CONFIG["timeout_llm"])
+                if resp.status_code == 200:
+                    ai_text = resp.json()["choices"][0]["message"]["content"].strip()
+                    # 清洗可能不慎夹带的 Markdown 标记
+                    ai_text = ai_text.replace("```text", "").replace("```", "").strip()
+                    logger.info("[LLM ENGINE] Dynamic report cognitive attribution complete.")
+                    return ai_text
+                logger.warning(f"[LLM ENGINE] Gateway returned status {resp.status_code} on attempt {attempt + 1}")
+            except Exception as e:
+                logger.error(f"[LLM ENGINE] Request gate break ({e}) on attempt {attempt + 1}", exc_info=True)
+            time.sleep(1)
+        return None
 
     def _collect_log_data(self, ticker, market, live_price, target_price):
-        """⚙️ 中优先级优化4：对齐内存数据库历史落库精度，两端死锁 4 位高精小数"""
         self.batch_log_buffer.append({
             "date": self.beijing_time.strftime('%Y-%m-%d'),
             "ticker": ticker,
@@ -186,7 +314,7 @@ class MultiAssetCloudAgent:
         })
 
     def _commit_batch_logs_to_database(self):
-        """异步集中批处理合拢落库与精确去重"""
+        """⚙️ 高优先级优化1：完整补全去重合并落库子模块，阻断代码文件粘贴截断故障"""
         if not self.batch_log_buffer: return
         try:
             new_df = pd.DataFrame(self.batch_log_buffer)
@@ -194,19 +322,27 @@ class MultiAssetCloudAgent:
                 combined_df = pd.concat([self._cached_history_df, new_df], ignore_index=True)
                 combined_df.drop_duplicates(subset=["date", "ticker", "market"], keep="last", inplace=True)
                 combined_df.to_csv(self.history_file, index=False, encoding="utf-8-sig")
+                self._cached_history_df = combined_df
+                logger.info(f"[DATABASE SUCCESS] Decoupled records synchronized. Ledger total records: {len(combined_df)}")
                 return
             new_df.to_csv(self.history_file, index=False, encoding="utf-8-sig")
+            self._cached_history_df = new_df
+            logger.info("[DATABASE SUCCESS] Established new time-series data storage node.")
         except Exception:
-            logger.error("[DATABASE ERROR] Atomic batch persistence commit failed", exc_info=True)
+            logger.error("[DATABASE EXCEPTION] Batch atomic operation crashed during database disk mapping", exc_info=True)
 
     def run_pipeline(self):
         logger.info("===== MATRIX PRODUCTION PIPELINE INITIATED =====")
+        
+        # ⚙️ 高优先级优化2：前置显式调拨宏观定价因子扫描模块，填充核心大局观入参
+        self._execute_dynamic_macro_radar()
+        
         cn_body = ""
+        raw_payload_for_ai = "" 
         squeezed_clusters_cn = []
         
         for cluster_key, cluster_cfg in MATRIX_CONFIG.items():
             cn_body += f"■ 品种矩阵: {cluster_cfg['name_cn']}\n"
-            cn_body += f"- 产业遥测: {cluster_cfg['telemetry_cn']}\n"
             
             if cluster_cfg["is_squeeze"]:
                 squeezed_clusters_cn.append(cluster_cfg["name_cn"].split(" (")[0])
@@ -217,97 +353,102 @@ class MultiAssetCloudAgent:
                 ticker = asset_info["ticker"]
                 sym = "$" if asset_info["currency"] == "USD" else "¥"
                 
-                # 级联高可用无阻碍取价
-                live_price, change_pct, is_fallback = self._fetch_live_price(ticker)
+                live_price, change_pct, is_fallback = self._fetch_live_price(ticker, asset_info["market"])
                 
-                # 🛡️ 数据清洗过滤：强行接入多维度常识边界校验门网
+                # 限制级硬边界核验
                 low_limit, high_limit = asset_info["bound"]
                 if not (low_limit <= live_price <= high_limit):
-                    logger.critical(f"[DATA INFRASTRUCTURE CORRUPTED] Defending boundary breach for {ticker}: {sym}{live_price}")
-                    # ⚙️ 中优先级优化3：异常清单排他去重，触发熔断则直接拦截，不在头部异常区重复追加兜底
+                    logger.critical(f"[DATA PROTECTION BLOCKED] Defending boundary breach for {ticker}: {sym}{live_price}")
                     self.blocked_assets_count += 1 
-                    self.exceptional_summary_list.append(f"  🔴 核心边界熔断: {asset_info['name']} ({ticker})")
-                    cn_body += f"  • [{asset_info['type_label']}] {asset_info['name']}: 🔴 价格溢出常识边界限制，防空网触发硬熔断强制拦截保护。\n"
+                    self.exceptional_summary_list.append(f"  🔴 统计边界熔断: {asset_info['name']} ({ticker})")
+                    cn_body += f"  • [{asset_info['type_label']}] {asset_info['name']}: 🔴 价格溢出常识边界限制，防空网触发硬熔断拦截保护。\n"
                     continue
                     
-                # 若安全过闸且触发了延迟兜底，执行排他审计追加
                 if is_fallback:
                     self.stale_assets_count += 1
                     self.exceptional_summary_list.append(f"  ⚠️ 临盘数据延迟: {asset_info['name']} ({ticker})")
                     
-                # 模型价格矩阵解算
                 target_price = round(live_price * asset_info["modifier"], PRICE_CONFIG["decimals"])
                 potential_upside = round(((target_price / live_price) - 1) * 100, PRICE_CONFIG["display_decimals"])
                 
-                # 记录安全流
                 self._collect_log_data(ticker, asset_info["market"], live_price, target_price)
                 buy_zone_str = self._calculate_buy_zone(live_price, target_price, cluster_cfg["is_squeeze"], params, sym)
                 
                 stale_marker = "*" if is_fallback else ""
                 change_str = f"({'+' if change_pct > 0 else ''}{change_pct}%)" if change_pct is not None else "(--%)"
                 
-                # ⚙️ 高优先级优化2：修正公允溢价符号逻辑缺陷，引入全新自解耦 upside_sign，绝对值利落输出
                 upside_sign = "+" if potential_upside >= 0 else "-"
                 space_label = "相对公允溢价(上涨空间)" if potential_upside >= 0 else "相对公允溢价(回调空间)"
                 abs_upside = abs(potential_upside)
                 
-                # 精准等宽压缩字段，缩短小屏幕单行字符上限，死锁跨设备移动端排版绝不强换行
-                cn_body += f"  • [{asset_info['type_label']}] {asset_info['name']}\n"
-                cn_body += f"    现价: {sym}{live_price}{stale_marker} {change_str} | 公允: {sym}{target_price}\n"
-                cn_body += f"    {space_label}: {upside_sign}{abs_upside}%\n"
-                cn_body += f"    🎯 建议实操区间: {buy_zone_str}\n"
+                # 构建给报告的明细块与给AI清洗的数据载荷
+                cn_body += f"  • [{asset_type.upper() if asset_info['market']=='US' else asset_info['type_label']}] {asset_info['name']}\n" \
+                           f"    现价: {sym}{live_price}{stale_marker} {change_str} | 公允: {sym}{target_price}\n" \
+                           f"    {space_label}: {upside_sign}{abs_upside}%\n" \
+                           f"    🎯 建议实操区间: {buy_zone_str}\n"
+                raw_payload_for_ai += f"矩阵:{cluster_cfg['name_cn']} | 标的:{asset_info['name']}({ticker}) | 现价:{sym}{live_price} | 涨跌幅:{change_str} | 公允价:{sym}{target_price} | 实操区间:{buy_zone_str}\n"
                 
             strat_cn = cluster_cfg["strat_cn_squeeze"] if cluster_cfg["is_squeeze"] else cluster_cfg["strat_cn_stable"]
-            cn_body += f"- 交易台指令: {strat_cn}\n\n"
+            cn_body += f"- 静态参考指引: {strat_cn}\n\n"
 
-        # 触发集中合并去重落库
+        # 安全合拢历史记账落库
         self._commit_batch_logs_to_database()
         elapsed_time = round(time.time() - self._start_time, PRICE_CONFIG["display_decimals"])
 
-        # 场景化语义审计看板组装
-        is_weekend = self.beijing_time.weekday() >= 5
-        if is_weekend:
-            health_summary = "全部标的取价成功，已锁定周末最新有效收盘价" if self.stale_assets_count == 0 and self.blocked_assets_count == 0 else f"延迟兜底: {self.stale_assets_count}项 | 熔断拦截: {self.blocked_assets_count}项"
-        else:
-            health_summary = "全线实时水源100%净水对齐" if self.stale_assets_count == 0 and self.blocked_assets_count == 0 else f"延迟兜底: {self.stale_assets_count}项 | 熔断拦截: {self.blocked_assets_count}项"
-
+        # 发送AI认知解算
+        ai_brain_report = self._execute_llm_brain_attribution(raw_payload_for_ai)
+        
+        # ⚙️ 中优先级优化4：利落去重异常清单条目
+        deduped_exceptions = list(dict.fromkeys(self.exceptional_summary_list))
         exception_panel = ""
-        if self.exceptional_summary_list:
-            exception_panel = "🚨 [数据健康审计异常置顶警报清单]:\n" + "\n".join(self.exceptional_summary_list) + "\n=========================================\n"
+        if deduped_exceptions:
+            exception_panel = "🚨 [数据健康度审计异常置顶警报清单]:\n" + "\n".join(deduped_exceptions) + "\n=========================================\n"
 
-        if squeezed_clusters_cn:
-            global_summary_cn = f"当前矩阵中 [{', '.join(squeezed_clusters_cn)}] 已强行进入全球极端挤仓通道。战略建议：本周国内实操资金应向上述多头板块对应的[A股个股/国内ETF/场外基金]进行重兵倾斜，参考下方购买区间执行追击。"
+        # ⚙️ 高优先级优化3：判定AI返回有效性，实现顶层宏观大局观与交易策略话术的平滑全覆盖替换
+        if ai_brain_report and len(ai_brain_report) > 50:
+            strategy_panel = f"=========================================\n" \
+                             f"{ai_brain_report}\n"
         else:
-            global_summary_cn = "当前全线监控矩阵均处于宏观公允震荡区间。战略建议：坚决执行左侧网格低吸蓝图，参考下方具体A股/场外基金区间设立分批限价单，静待系统性恐慌砸盘坑。"
+            if squeezed_clusters_cn:
+                global_summary_cn = f"当前矩阵中 [{', '.join(squeezed_clusters_cn)}] 进入全球挤仓通道。建议核心实体资金向对应[A股个股/国内ETF/场外基金]进行重兵倾斜。"
+            else:
+                global_summary_cn = "当前全线监控矩阵均处于宏观公允震荡区间。坚决执行既定的左侧网格低吸蓝图，以限价单静待系统性恐慌下砸坑。"
+            strategy_panel = f"=========================================\n" \
+                             f"核心全局战略总结 (EXECUTIVE SUMMARY):\n{global_summary_cn}\n"
+
+        is_weekend = self.beijing_time.weekday() >= 5
+        health_summary = f"最新有效收盘价" if is_weekend else f"全线实时水源100%对齐"
+        if self.stale_assets_count > 0 or self.blocked_assets_count > 0:
+            health_summary = f"延迟兜底: {self.stale_assets_count}项 | 熔断拦截: {self.blocked_assets_count}项"
 
         total_payload_text = f"""🏛️ [AI QUANTAMENTAL EXECUTIVE PROTOCOL]
 报告时间 (北京时间): {self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}
-数据审计: 🧭 {health_summary}
+数据审计: 🧭 {health_summary} (内容由AI生成，仅供模型归因参考)
 =========================================
-核心全局战略总结 (EXECUTIVE SUMMARY):
-{global_summary_cn}
-=========================================
-{exception_panel}A股 / 场外基金投研矩阵详情:
+[📈 全球宏观因子雷达实时扫描]:
+{self._macro_live_factors_text}
+{strategy_panel}=========================================
+本土化全衍生工具投研矩阵详情 (GLOBAL ANCHORS / A-SHARE ETFS / OTC FUNDS / STOCKS):
 
 {cn_body}-----------------------------------------
-[SYSTEM LOG] Pipeline processed successfully. Total assets audited: {sum(len(c['assets']) for c in MATRIX_CONFIG.values())} | Fallback: {self.stale_assets_count} | Blocked: {self.blocked_assets_count} | Latency: {elapsed_time}s.
+[SYSTEM LOG] Pipeline processed successfully. Total assets audited: {sum(len(c['assets']) for c in MATRIX_CONFIG.values())} | Tencent-to-YF Fallbacks: {self.cn_yfinance_fallback_count} | Ledger Fallbacks: {self.stale_assets_count} | Blocked: {self.blocked_assets_count} | Latency: {elapsed_time}s.
 Powered by Production Quantamental Engine 10.0"""
 
         print(total_payload_text)
         
-        # 飞书外发网关与指数重试回路
+        # 飞书外发网关
         if self.webhook_url:
             feishu_payload = {"msg_type": "text", "content": {"text": total_payload_text}}
-            for attempt in range(NOTIFIER_CONFIG["max_retries"]):
+            for attempt in range(HTTP_CONFIG["max_retries"]):
                 try:
-                    response = requests.post(self.webhook_url, json=feishu_payload, timeout=NOTIFIER_CONFIG["timeout"])
+                    response = requests.post(self.webhook_url, json=feishu_payload, timeout=HTTP_CONFIG["timeout_notify"])
                     if response.status_code == 200:
                         logger.info(f"[NOTIFIER SUCCESS] Data matrix pushed to Feishu on attempt {attempt + 1}")
                         break
                 except Exception:
-                    if attempt == NOTIFIER_CONFIG["max_retries"] - 1:
+                    if attempt == HTTP_CONFIG["max_retries"] - 1:
                         logger.error("[NOTIFIER CRITICAL] Feishu gateway unreachable.", exc_info=True)
-                    time.sleep(NOTIFIER_CONFIG["retry_delay"])
+                    time.sleep(HTTP_CONFIG["retry_delay"])
 
 if __name__ == "__main__":
     matrix_agent = MultiAssetCloudAgent()
