@@ -2,8 +2,9 @@ name: Global Copper Quantamental Agent Auto-Scheduler
 
 on:
   schedule:
-    - cron: '45 0 * * 1-5'  # 北京时间周一至周五早上 8:45 自动出击
-  workflow_dispatch:      # 允许你随时手动点火
+    - cron: '45 0 * * 1-5'  # 🌅 早上 08:45（UTC 00:45）早盘定调前瞻
+    - cron: '30 6 * * 1-5'  # ⚔️ 下午 14:30（UTC 06:30）尾盘锁定伏击
+  workflow_dispatch:        # 保持手动点火开关
 
 jobs:
   execute-intelligence-pipeline:
