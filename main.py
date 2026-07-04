@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - 
 logger = logging.getLogger("ProductionEngine")
 
 # ====================================================================================
-# 🎛️ CONFIGURATION CENTRAL (行研参数配置中台 - 实现完全解耦)
+# CONFIGURATION CENTRAL (行研参数配置中台)
 # ====================================================================================
 CONFIG = {
     "TICKER": "HG=F",
@@ -19,7 +19,7 @@ CONFIG = {
     "TC_RC": 4.50,
     "AI_CAPEX_GROWTH": 35.0,
     "BASE_DAILY_BURN": 70000.0,
-    "WEBHOOK_URL": os.environ.get("ALERT_WEBHOOK_URL", "") # 从环境变量隐式读取警报通道
+    "WEBHOOK_URL": os.environ.get("ALERT_WEBHOOK_URL", "")
 }
 
 class CloudAgent:
@@ -48,37 +48,51 @@ class CloudAgent:
         if target_price > 6.0: target_price = round(target_price * 0.98, 4)
         potential_upside = round(((target_price / live_price) - 1) * 100, 2)
         
-        # 5. 生成中文版报告文本
-        report_cn = f"""🏛️ 【AI 投研大脑实时简报】
-⏰ 审计时间 (北京时间): {self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}
-█==================================================█
-📈 交易所显性库存环比变动率: {stock_velocity}% 
-📈 国际铜精矿 Spot TC/RC 加工费: ${CONFIG['TC_RC']} USD/公吨
-📈 AI 修正后全球实体库存维持天数: {true_safety_days} 天
-🔮 华尔街即时价格: ${live_price} USD/磅 ➔ 模型 30 天公允目标价: ${target_price} USD/磅
-█==================================================█
-🎯 最终临盘开枪指令:
-➡️ {'🚨 触发高斜率逼空红线！周一开盘以限价单全额重兵伏击上游核心资产。' if stock_velocity < -5.0 and CONFIG['TC_RC'] < 5.0 and potential_upside > 0 else '🌿 价格回归公允估值区间。死死按住账上现金长矛，继续保持左侧猎人定力，死等系统性恐慌砸盘跌停坑。'}
-█==================================================█"""
+        # 5. 生成极其严谨的中文版报告（去除所有Emoji图标，采用彭博终端标准行距）
+        report_cn = f"""GLOBAL COMMODITY QUANTAMENTAL RESEARCH BRIEFING
+报告时间 (北京时间): {self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}
+------------------------------------------------------------
+[当前策略评级] 震荡区间 / 保持左侧定力 (STABLE RANGE)
 
-        # 6. 生成英文版报告文本
-        report_en = f"""🏛️ 【AI QUANTAMENTAL INTELLIGENCE BRIEFING】
-⏰ Audit Time (Beijing Time): {self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}
-█==================================================█
-📈 Global Visible Stock MoM Change: {stock_velocity}% 
-📈 Spot TC/RC Processing Fee: ${CONFIG['TC_RC']} USD/Ton
-📈 AI-Adjusted Global Safety Runway: {true_safety_days} Days
-🔮 Live Wall Street Price: ${live_price} USD/lb ➔ Model 30-Day Fair Target: ${target_price} USD/lb
-█==================================================█
-🎯 Actionable Trading Desk Guidance:
-➡️ {'🚨 LEVEL 1 ASSET SQUEEZE DETECTED! Deploy 100% limit orders to ambush upstream core assets on Monday morning.' if stock_velocity < -5.0 and CONFIG['TC_RC'] < 5.0 and potential_upside > 0 else '🌿 STABLE RANGE. Maintain current cash defensive line and wait for systemic liquidity panic shock.'}
-█==================================================█"""
+1. 盘面价格与估值综述 (MARKET DATA OVERVIEW)
+- 期铜即时结算价格 : ${live_price} USD/磅
+- 模型公允目标价格 : ${target_price} USD/磅
+- 预期资本损益空间 : {potential_upside}% (估值高位倒挂)
 
-        # 7. 中英对照合拢
-        report_content = report_cn + "\n\n" + "🌐 ================================================== 🌐" + "\n\n" + report_en
+2. 核心基本面量化遥测 (KEY FUNDAMENTAL TELEMETRY)
+- 交易所显性库存环比变动率 : {stock_velocity}%
+- 国际铜精矿现货 TC/RC 加工费 : ${CONFIG['TC_RC']} USD/公吨
+- AI 修正后全球实体库存维持天数 : {true_safety_days} 天 (临界红线: 6天)
+
+3. 交易台临盘决策指引 (ACTIONABLE TRADING DESK GUIDANCE)
+- 执行策略 : {'触发高斜率逼空红线。周一开盘以限价单(Limit Orders)全额重兵伏击上游核心资产。' if stock_velocity < -5.0 and CONFIG['TC_RC'] < 5.0 and potential_upside > 0 else '坚决维持当前现金防御战线。周一早盘静待外部硬件板块高位洗盘引发的系统性流动性冲击，砸出均线打折坑时再行左侧挂单吸筹。'}
+------------------------------------------------------------"""
+
+        # 6. 生成纯净的英文版报告
+        report_en = f"""GLOBAL COMMODITY QUANTAMENTAL RESEARCH BRIEFING
+Audit Time (Beijing Time): {self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}
+------------------------------------------------------------
+[STRATEGIC STATUS] STABLE RANGE
+
+1. MARKET DATA OVERVIEW
+- Live Wall Street Price      : ${live_price} USD/lb
+- Model 30-Day Fair Target    : ${target_price} USD/lb
+- Quantitative Capital Upside : {potential_upside}%
+
+2. KEY FUNDAMENTAL TELEMETRY
+- Global Visible Stock MoM Change : {stock_velocity}%
+- Spot TC/RC Processing Fee       : ${CONFIG['TC_RC']} USD/Ton
+- AI-Adjusted Global Safety Runway: {true_safety_days} Days
+
+3. ACTIONABLE TRADING DESK GUIDANCE
+- Execution Strategy: {'LEVEL 1 ASSET SQUEEZE DETECTED! Deploy 100% limit orders to ambush upstream core assets on Monday morning.' if stock_velocity < -5.0 and CONFIG['TC_RC'] < 5.0 and potential_upside > 0 else 'STABLE RANGE. Maintain current cash defensive line and wait for systemic liquidity panic shock.'}
+------------------------------------------------------------"""
+
+        # 7. 纯文本无缝拼接
+        report_content = report_cn + "\n\n" + "============================================================" + "\n\n" + report_en
         print(report_content)
         
-        # 🚀 【神级修复】强制对齐飞书专用的规范数据载荷格式 (Strict JSON Schema)
+        # 🚀 飞书专属红头文件规范载荷
         if CONFIG["WEBHOOK_URL"]:
             try:
                 feishu_payload = {
@@ -88,7 +102,7 @@ class CloudAgent:
                     }
                 }
                 response = requests.post(CONFIG["WEBHOOK_URL"], json=feishu_payload)
-                logger.info(f"Feishu server backbone response: {response.text}")
+                logger.info(f"Feishu backbone response: {response.text}")
             except Exception as e:
                 logger.error(f"Failed to push alert: {e}")
                 
