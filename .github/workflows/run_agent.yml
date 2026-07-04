@@ -1,15 +1,13 @@
 name: Global Copper Quantamental Agent Auto-Scheduler
 
-# ⏱️ 核心自动化触发机制：利用标准 Linux Cron 表达式
-# 设定在每周一到周五，北京时间早上 8:45 分（A股开盘前 15 分钟），在云端自动唤醒大脑
 on:
   schedule:
     - cron: '45 0 * * 1-5'  # 国际标准时 0:45，刚好对应东八区北京时间早上 8:45
-  workflow_dispatch: # 允许你在手机或网页上一键手动强制触发运行
+  workflow_dispatch: # 允许手动强制触发
 
 jobs:
   execute-intelligence-pipeline:
-    runs-on: ubuntu-latest # 使用 GitHub 提供的云端 Ubuntu Linux 虚拟系统
+    runs-on: ubuntu-latest
 
     steps:
     - name: 1. 强行克隆并检出当前最新的代码仓库
@@ -27,3 +25,6 @@ jobs:
 
     - name: 4. 彻底点火！全权启动 Leo 的量化基本面指挥官引擎
       run: python main.py
+      env:
+        # 🔗 【核心修复】强行将 GitHub Secrets 里的绝密天线桥接到 Python 系统变量中
+        ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
