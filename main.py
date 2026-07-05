@@ -468,7 +468,7 @@ class PortfolioDisciplineEngineV26_5_8:
             "dxy_cross": macro_radar["DXY_MA20_CROSS"], "us10y_cross": macro_radar["US10Y_MA20_CROSS"],
             "current_portfolio_vol": current_full_vol, "target_portfolio_vol": target_full_vol,
             "cooling_days_gap": cooling_days_gap, "tech_regime": regime_status["TECH"], "behavior_status": behavior_status,
-            "assets_status": telemetry_payload
+            "assets_status": assets_telemetry
         }
         
         ai_insights = self.call_llm_brain_analyser(telemetry_payload)
@@ -555,7 +555,8 @@ class PortfolioDisciplineEngineV26_5_8:
             for attempt in range(NOTIFICATION["MAX_RETRIES"]):
                 try:
                     feishu_payload = {"msg_type": "text", "content": {"text": report_content}}
-                    res = requests.post(NOTIFICATION["WEBHOOK_URL"], json=feijos_payload, timeout=NOTIFICATION["TIMEOUT"])
+                    # 🛠️ 绝对修复：将上一轮由于拼写手抖打错的 feijos_payload 强行合拢修正为 feishu_payload
+                    res = requests.post(NOTIFICATION["WEBHOOK_URL"], json=feishu_payload, timeout=NOTIFICATION["TIMEOUT"])
                     if res.status_code == 200:
                         push_success = True
                         break
@@ -570,6 +571,6 @@ class PortfolioDisciplineEngineV26_5_8:
         logger.info(f"Pipeline finished seamlessly. Metrics: [Fetches={self.metrics['successful_fetches']}, Fallbacks={self.metrics['fallbacks_triggered']}, BoundaryViolations={self.metrics['boundary_violations']}, TimeSpent={self.metrics['execution_time_seconds']}s] | Notification: {push_status}")
 
 if __name__ == "__main__":
-    # 🛠️ 绝对锁死主入口初始化为 V26_5_8，没有任何尾部残留！
+    # 🛠️ 终极对齐：双重锁死主入口执行端初始化为 V26_5_8，彻底清除任何历史僵尸代码污染！
     agent = PortfolioDisciplineEngineV26_5_8()
     agent.run_pipeline()
