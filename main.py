@@ -184,8 +184,10 @@ class PortfolioDisciplineEngineV26_5_8:
         return 12.0, 5.0, 0
 
     def _solve_constrained_equal_risk_contribution(self, cov_matrix, active_assets):
+        """五资产约束等风险贡献（CERC）数值优化求解器"""
         n = cov_matrix.shape[0]
         
+        # 将全账户风控铁律上限，通过风险资产可用预算动态转换为内部相对口径边界
         risk_budget = 1.0 - IRON_LAWS["MIN_CASH_FLOOR"]
         bounds = []
         for asset_key in active_assets:
@@ -328,9 +330,10 @@ class PortfolioDisciplineEngineV26_5_8:
 
         macro_radar = {"DXY_MA20_CROSS": "UNKNOWN", "US10Y_MA20_CROSS": "UNKNOWN"}
         if data_matrix["DXY"] is not None and data_matrix["US10Y"] is not None:
-            macro_radar["DXY_MA20_CROSS"] = "BELOW_MA20 (流动性边际释放)" if prices["DXY"] < data_matrix["DXY"]['Close'].rolling(20).mean().iloc[-1] else "ABOVE_MA20 (流动性收紧)"
+            macro_radar["DXY_MA20_CROSS"] = "BELOW_MA20 (流动性边际释放)" if prices["DXY"] < data_matrix["DXY']['Close'].rolling(20).mean().iloc[-1] else "ABOVE_MA20 (流动性收紧)"
             macro_radar["US10Y_MA20_CROSS"] = "BELOW_MA20 (重力压制减弱)" if prices["US10Y"] < data_matrix["US10Y"]['Close'].rolling(20).mean().iloc[-1] else "ABOVE_MA20 (重力压制增强)"
 
+        # 风险资产内部子空间口径加权融合
         total_strategic_risk_w = sum(PORTFOLIO_ACCOUNT["STRATEGIC_BASELINE"][a] for a in RISK_ASSETS)
         strategic_internal = {a: PORTFOLIO_ACCOUNT["STRATEGIC_BASELINE"][a] / total_strategic_risk_w for a in RISK_ASSETS}
 
@@ -567,6 +570,6 @@ class PortfolioDisciplineEngineV26_5_8:
         logger.info(f"Pipeline finished seamlessly. Metrics: [Fetches={self.metrics['successful_fetches']}, Fallbacks={self.metrics['fallbacks_triggered']}, BoundaryViolations={self.metrics['boundary_violations']}, TimeSpent={self.metrics['execution_time_seconds']}s] | Notification: {push_status}")
 
 if __name__ == "__main__":
-    # 🛠️ 终极对齐：将执行端初始化彻底修正为与顶层类名严格合拢的 V26_5_8
+    # 刚性死锁修复：严格调用当前文件定义的 V26_5_8 类，彻底绝育由于拼写不一致引发的 NameError
     agent = PortfolioDisciplineEngineV26_5_8()
     agent.run_pipeline()
