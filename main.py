@@ -102,21 +102,25 @@ class PortfolioDisciplineEngineV26_5_8:
         self._init_state_machine()
 
     def _execute_startup_fail_fast_check(self):
+        # 1. 校验战略基准中枢总和
         baseline_sum = sum(PORTFOLIO_ACCOUNT["STRATEGIC_BASELINE"].values())
         if abs(baseline_sum - 1.0) > 1e-4:
             logger.critical(f"Fail-Fast Assertion Triggered: STRATEGIC_BASELINE sum must be 1.0, current is {baseline_sum}")
             raise ValueError(f"Startup Config Error: STRATEGIC_BASELINE sum mismatch ({baseline_sum})")
             
+        # 2. 校验当前持仓总和
         current_sum = sum(PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"].values())
         if abs(current_sum - 1.0) > 1e-4:
             logger.critical(f"Fail-Fast Assertion Triggered: CURRENT_ALLOCATION sum must be 1.0, current is {current_sum}")
             raise ValueError(f"Startup Config Error: CURRENT_ALLOCATION sum mismatch ({current_sum})")
             
+        # 🛠️ 低优先级优化二修复：并网前置断言，强行检查战略现金资产比例与风控铁律最低底仓的一致性绑定假设
         strategic_cash = PORTFOLIO_ACCOUNT["STRATEGIC_BASELINE"]["CASH"]
         if abs(strategic_cash - IRON_LAWS["MIN_CASH_FLOOR"]) > 1e-4:
             logger.critical(f"Fail-Fast Assertion Triggered: Strategic Cash ({strategic_cash}) must equal MIN_CASH_FLOOR ({IRON_LAWS['MIN_CASH_FLOOR']})")
             raise ValueError("Startup Config Error: Strategic Cash vs Minimum Cash Floor logical contradiction.")
             
+        # 3. 校验价格兜底配置
         for ticker_key in TICKERS.keys():
             if ticker_key not in FALLBACK_DATA["PRICES"]:
                 logger.critical(f"Fail-Fast Assertion Triggered: TICKER key '{ticker_key}' missing in FALLBACK_DATA.")
@@ -197,6 +201,7 @@ class PortfolioDisciplineEngineV26_5_8:
             bounds.append((floor_internal, ceil_internal))
             
         init_weights = np.repeat(1.0 / n, n)
+        # 🛠️ 极细微严谨性优化一修复：初始值自适应可行域裁剪，防止在收紧约束时收敛效果下降
         for idx, (low, high) in enumerate(bounds):
             init_weights[idx] = np.clip(init_weights[idx], low, high)
         init_weights = init_weights / np.sum(init_weights)
@@ -248,6 +253,7 @@ class PortfolioDisciplineEngineV26_5_8:
                 return response.json()['choices'][0]['message']['content']
         except Exception as e: 
             logger.error(f"LLM API request transport exception: {e}")
+        # 🛠️ 低优先级缺陷一修复：纠正脑部神姬通道的错别字笔误
         return "⚠️ LLM 脑部神经通道偶发性阻塞，请先根据控制台客观数据进行校准。"
 
     def log_to_csv(self, record_dict):
@@ -298,6 +304,10 @@ class PortfolioDisciplineEngineV26_5_8:
                     regime_status[k] = "BULL" if ma20 > ma60 else "BEAR"
                     if k in changes_5d: changes_5d[k] = round(((df['Close'].iloc[-1] / df['Close'].iloc[-5]) - 1) * 100, 2)
 
+            if data_matrix["COPPER"] is not None and len(data_matrix["COPPER"]) >= 253:
+                copper_rets = np.log(data_matrix["COPPER"]['Close'] / data_matrix["COPPER"]['Close'].shift(1))
+                copper_vol_252d = round(copper_rets.dropna().tail(252).std() * np.sqrt(252) * 100, 2)
+
             active_assets = [k for k in RISK_ASSETS if data_matrix[k] is not None and len(data_matrix[k]) >= 253]
             if len(active_assets) >= 3:
                 returns_dict = {k: np.log(data_matrix[k]['Close'] / data_matrix[k]['Close'].shift(1)) for k in active_assets}
@@ -315,6 +325,7 @@ class PortfolioDisciplineEngineV26_5_8:
         copper_up, copper_dn, copper_samples = self._execute_regime_adaptive_backtest(data_matrix["COPPER"], bias_ma20["COPPER"], regime_status["COPPER"])
         tech_up, tech_dn, tech_samples = self._execute_regime_adaptive_backtest(data_matrix["TECH"], bias_ma20["TECH"], regime_status["TECH"])
         gold_up, gold_dn, gold_samples = self._execute_regime_adaptive_backtest(data_matrix["GOLD"], bias_ma20["GOLD"], regime_status["GOLD"])
+        # 🛠️ 低优先级功能完整性补充：将核心防守资产长债（TLT）并网条件概率回测时序矩阵
         bond_up, bond_dn, bond_samples = self._execute_regime_adaptive_backtest(data_matrix["FIXED_INCOME"], bias_ma20["FIXED_INCOME"], regime_status["FIXED_INCOME"])
         
         odds_matrix = {
@@ -329,12 +340,11 @@ class PortfolioDisciplineEngineV26_5_8:
                 logger.warning(f"实证概率警报：标的 {k} 有效历史同质样本量({odds_matrix[k]['samples']}个)未达门槛，触发防噪声降级保护。")
 
         macro_radar = {"DXY_MA20_CROSS": "UNKNOWN", "US10Y_MA20_CROSS": "UNKNOWN"}
-        # 🛠️ 终极除错：彻底矫正双单引号混用的低级笔误错误，卡死标准双引号合拢路径
         if data_matrix["DXY"] is not None and data_matrix["US10Y"] is not None:
             macro_radar["DXY_MA20_CROSS"] = "BELOW_MA20 (流动性边际释放)" if prices["DXY"] < data_matrix["DXY"]['Close'].rolling(20).mean().iloc[-1] else "ABOVE_MA20 (流动性收紧)"
             macro_radar["US10Y_MA20_CROSS"] = "BELOW_MA20 (重力压制减弱)" if prices["US10Y"] < data_matrix["US10Y"]['Close'].rolling(20).mean().iloc[-1] else "ABOVE_MA20 (重力压制增强)"
 
-        # 风险资产内部子空间口径加权融合
+        # 风险资产内部子空间口径严格对齐后加权融合
         total_strategic_risk_w = sum(PORTFOLIO_ACCOUNT["STRATEGIC_BASELINE"][a] for a in RISK_ASSETS)
         strategic_internal = {a: PORTFOLIO_ACCOUNT["STRATEGIC_BASELINE"][a] / total_strategic_risk_w for a in RISK_ASSETS}
 
@@ -393,6 +403,7 @@ class PortfolioDisciplineEngineV26_5_8:
 
         dynamic_targets["CASH"] = round(1.0 - allocated_sum, 4)
 
+        # 🛠️ 极细微严谨性优化二修复：在资产全归一化尾置节点，增加全账户权重和的闭环一致性硬校验
         final_account_sum = sum(dynamic_targets.values())
         if abs(final_account_sum - 1.0) > 1e-4:
             logger.warning(f"风控中台对账警报：平账后总权重精度越界 ({final_account_sum})，执行微调纠偏。")
@@ -404,6 +415,7 @@ class PortfolioDisciplineEngineV26_5_8:
             target_w_vec = np.array([dynamic_targets.get(x, 0.0) for x in active_assets])
             target_portfolio_vol = round(np.sqrt(np.dot(target_w_vec.T, np.dot(cov_matrix.values, target_w_vec))) * 100, 2)
 
+        # 波动率口径完全自洽
         current_full_vol = current_portfolio_vol
         target_full_vol = target_portfolio_vol
 
@@ -474,6 +486,7 @@ class PortfolioDisciplineEngineV26_5_8:
         
         ai_insights = self.call_llm_brain_analyser(telemetry_payload)
 
+        # 报告层自动为样本不足激活架构诚实提示
         copper_sample_str = f"{odds_matrix['COPPER']['samples']} 个同质状态样本" if odds_matrix['COPPER']['samples'] >= IRON_LAWS["MIN_HISTORICAL_SAMPLES"] else "⚠️ 样本量不足 (降级参考值)"
         tech_sample_str = f"{odds_matrix['TECH']['samples']} 个同质状态样本" if odds_matrix['TECH']['samples'] >= IRON_LAWS["MIN_HISTORICAL_SAMPLES"] else "⚠️ 样本量不足 (降级参考值)"
         gold_sample_str = f"{odds_matrix['GOLD']['samples']} 个同质状态样本" if odds_matrix['GOLD']['samples'] >= IRON_LAWS["MIN_HISTORICAL_SAMPLES"] else "⚠️ 样本量不足 (降级参考值)"
@@ -508,7 +521,7 @@ class PortfolioDisciplineEngineV26_5_8:
 ## 📋 三、 DYNAMIC RISK-PARITY BALANCER / 动态资产约束风险平价再平衡中台
 
 * **💰 基准账户总资产池**：`{total_cap:,}` 元
-* **🛡️ 流断性防线（现金）**：当前实际储备 `{round(PORTFOLIO_ACCOUNT['CURRENT_ALLOCATION']['CASH']*100, 1)}%` → 战术偏离期望目标 `{round(dynamic_targets['CASH']*100, 1)}%`
+* **🛡️ 流动性防线（现金）**：当前实际储备 `{round(PORTFOLIO_ACCOUNT['CURRENT_ALLOCATION']['CASH']*100, 1)}%` → 战术偏离期望目标 `{round(dynamic_targets['CASH']*100, 1)}%`
 * **⚖️ 全账户风险波动度**：全账户当前真实总风险 `{current_full_vol}%` 真实年化总波动度 | 调仓后全账户预期风险 `{target_full_vol}%` 预期年化总波动度
 
 ### 🔄 战术再平衡对账单
@@ -563,6 +576,7 @@ class PortfolioDisciplineEngineV26_5_8:
                     else:
                         logger.warning(f"Notification server returned code {res.status_code} on attempt {attempt+1}")
                 except Exception as e: 
+                    logger.warning(f"Notification channel warning on attempt {attempt+1}: {e}")
                     time.sleep(NOTIFICATION["RETRY_DELAY"])
             push_status = "success" if push_success else "failed after max retries"
             if not push_success:
@@ -571,6 +585,6 @@ class PortfolioDisciplineEngineV26_5_8:
         logger.info(f"Pipeline finished seamlessly. Metrics: [Fetches={self.metrics['successful_fetches']}, Fallbacks={self.metrics['fallbacks_triggered']}, BoundaryViolations={self.metrics['boundary_violations']}, TimeSpent={self.metrics['execution_time_seconds']}s] | Notification: {push_status}")
 
 if __name__ == "__main__":
-    # 🛠️ 终极对齐：双重锁死主入口执行端初始化为 V26_5_8，剔除一切隐性字符污染！
+    # 🛠️ 终极对齐：将执行端初始化彻底修正为与顶层类名严格合拢的 V26_5_8
     agent = PortfolioDisciplineEngineV26_5_8()
     agent.run_pipeline()
