@@ -23,8 +23,8 @@ logger = logging.getLogger("MatrixMasterEngine_V26_5_5")
 # ====================================================================================
 TICKERS = {
     "COPPER": "HG=F",      # COMEX期铜 (全球工业商品定价参考锚)
-    "RESOURCE": "COPX",    # 资源多头线 (矿业巨头ETF / 盛达资源等国内有色映射)
-    "TECH": "XLK",         # 科技算力线 (全球AI硬件资本池 / 纳指核心拉动源)
+    "RESOURCE": "COPX",    # 资源多头线 (矿业巨头ETF)
+    "TECH": "XLK",         # 科技算力线 (全球AI硬件资本池)
     "GOLD": "GLD",         # 避险贵金属 (实盘防守超配资产)
     "FIXED_INCOME": "TLT", # 跨周期长债 (宏观无风险流动性对冲资产)
     "DXY": "DX-Y.NYB",     # 美元指数 (全球流动性总闸门基准)
@@ -56,7 +56,6 @@ PORTFOLIO_ACCOUNT = {
     }
 }
 
-# 隔离低波防守资产天花板，释放数理优化空间
 IRON_LAWS = {
     "COOLING_PERIOD_DAYS": 14,         # 铁律一：真实调仓间隔必须 ≥ 14天
     "MAX_REBALANCE_ADJUSTMENT": 0.05,  # 铁律二：单次再平衡调仓步长幅度 ≤ 总资产5%
@@ -89,34 +88,26 @@ PERSISTENCE = {
 class PortfolioDisciplineEngineV26_5_5:
     def __init__(self):
         self.beijing_time = datetime.now(timezone.utc) + timedelta(hours=8)
-        
         self.metrics = {
             "successful_fetches": 0,
             "fallbacks_triggered": 0,
             "boundary_violations": 0,
             "execution_time_seconds": 0.0
         }
-        
         self._execute_startup_fail_fast_check()
         self._init_state_machine()
 
     def _execute_startup_fail_fast_check(self):
-        # 1. 校验战略基准中枢
         baseline_sum = sum(PORTFOLIO_ACCOUNT["STRATEGIC_BASELINE"].values())
         if abs(baseline_sum - 1.0) > 1e-4:
-            logger.critical(f"Fail-Fast Assertion Triggered: STRATEGIC_BASELINE sum must be 1.0, current is {baseline_sum}")
             raise ValueError(f"Startup Config Error: STRATEGIC_BASELINE sum mismatch ({baseline_sum})")
             
-        # 🛠️ 中优先级优化三：并网当前账户持仓权重和校验，彻底杜绝手动调仓改错引起的资产缺口偏差
         current_sum = sum(PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"].values())
         if abs(current_sum - 1.0) > 1e-4:
-            logger.critical(f"Fail-Fast Assertion Triggered: CURRENT_ALLOCATION sum must be 1.0, current is {current_sum}")
             raise ValueError(f"Startup Config Error: CURRENT_ALLOCATION sum mismatch ({current_sum})")
             
-        # 2. 校验兜底真数名池
         for ticker_key in TICKERS.keys():
             if ticker_key not in FALLBACK_DATA["PRICES"]:
-                logger.critical(f"Fail-Fast Assertion Triggered: TICKER key '{ticker_key}' missing in FALLBACK_DATA Prices matrix.")
                 raise KeyError(f"Startup Config Error: Missing fallback index for '{ticker_key}'")
         logger.info("Startup Fail-Fast Check: All initialization configurations perfectly aligned.")
 
@@ -134,11 +125,7 @@ class PortfolioDisciplineEngineV26_5_5:
                 self.portfolio_state = default_state
                 with open(PERSISTENCE["STATE_FILE"], 'w', encoding='utf-8') as f: json.dump(default_state, f, indent=4)
         except Exception as e:
-            logger.error(f"State file synchronization fault: {e}")
             self.portfolio_state = default_state
-
-    def sniff_spot_tc_rc(self):
-        return 4.50
 
     def fetch_ticker_safe(self, symbol, period="5y"):
         for attempt in range(NOTIFICATION["MAX_RETRIES"]):
@@ -155,7 +142,7 @@ class PortfolioDisciplineEngineV26_5_5:
                 self.metrics["successful_fetches"] += 1
                 return df
             except Exception as e:
-                logger.warning(f"Data stream retry event for {symbol}: {e}")
+                pass
         self.metrics["fallbacks_triggered"] += 1
         return None
 
@@ -180,20 +167,18 @@ class PortfolioDisciplineEngineV26_5_5:
                 return float(valid_samples['fwd_return_20d'].dropna().median()), float(valid_samples['fwd_real_downside'].dropna().median()), sample_count
             return 12.0, 5.0, sample_count
         except Exception as e:
-            logger.warning(f"Empirical backtest sub-layer crash: {e}")
+            pass
         return 12.0, 5.0, 0
 
     def _solve_constrained_equal_risk_contribution(self, cov_matrix, active_assets):
         n = cov_matrix.shape[0]
         init_weights = np.repeat(1.0 / n, n)
-        
         bounds = []
         for asset_key in active_assets:
             ceil = IRON_LAWS["MAX_BOND_CEILING"] if asset_key == "FIXED_INCOME" else IRON_LAWS["MAX_ASSET_CEILING"]
             bounds.append((0.05, ceil))
             
         constraints = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0})
-        
         def erc_objective_function(w):
             w = np.array(w)
             portfolio_variance = np.dot(w.T, np.dot(cov_matrix, w))
@@ -207,16 +192,25 @@ class PortfolioDisciplineEngineV26_5_5:
             res = minimize(erc_objective_function, init_weights, method='SLSQP', bounds=bounds, constraints=constraints, tol=1e-8)
             if res.success: return res.x
         except Exception as e:
-            logger.warning(f"SLSQP Optimizer convergence break: {e}")
+            pass
         diag_inv = 1.0 / np.sqrt(np.diag(cov_matrix))
         return diag_inv / np.sum(diag_inv)
 
-    def call_deepseek_brain_analyser(self, portfolio_json_data):
-        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-        if not api_key: return "⚠️ 离岸云端大模型Token环境变量流未接通，已自动降级跳过智脑决策层。"
-        url = "https://api.deepseek.com/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    def call_llm_brain_analyser(self, portfolio_json_data):
+        # 🛠️ 终极对齐：全面解耦并网用户的通用大模型配置中心
+        api_key = os.environ.get("LLM_API_KEY", "")
+        base_url = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1")
+        model_name = os.environ.get("LLM_MODEL", "deepseek-chat")
         
+        if not api_key: 
+            return "⚠️ 离岸云端大模型Token环境变量流未接通，已自动降级跳过智脑决策层。"
+            
+        # 规范化补全补正 completions 终点路径
+        url = base_url.rstrip('/')
+        if not url.endswith('/chat/completions'):
+            url += '/chat/completions'
+            
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         prompt = f"""你现在是在华尔街拥有20年大类资产配置经验的资深买方基金经理。
                   下面是我个人为你审计出的最新真实持仓与跨标的协方差风险平价(CERC)全账户镜面数据 JSON：
                   {json.dumps(portfolio_json_data, ensure_ascii=False)}
@@ -227,12 +221,14 @@ class PortfolioDisciplineEngineV26_5_5:
                   2. 结合我的持仓状况（黄金超配28%，科技18%），系统为何今天向我宣判锁死在冷静期/禁止肉身频繁调仓多动？
                   请务必将最终分析字数严格控制在 250 字以内，字数越少，含金量越高，拒绝任何股评废话。"""
                   
-        payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3}
+        payload = {"model": model_name, "messages": [{"role": "user", "content": prompt}], "temperature": 0.3}
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=15)
-            if response.status_code == 200: return response.json()['choices'][0]['message']['content']
-        except Exception as e: logger.error(f"DeepSeek API Channel bottlenecked: {e}")
-        return "⚠️ DeepSeek 脑部神经通道偶发性阻塞，请先根据控制台客观数据进行校准。"
+            if response.status_code == 200: 
+                return response.json()['choices'][0]['message']['content']
+        except Exception as e: 
+            logger.error(f"LLM API request exception: {e}")
+        return "⚠️ LLM 脑部神经通道偶发性阻塞，请先根据控制台客观数据进行校准。"
 
     def log_to_csv(self, record_dict):
         try:
@@ -247,7 +243,7 @@ class PortfolioDisciplineEngineV26_5_5:
                 df_combined.drop_duplicates(subset=["audit_date"], keep="last", inplace=True)
                 df_combined.to_csv(PERSISTENCE["DB_FILE"], index=False, encoding="utf-8-sig")
         except Exception as e:
-            logger.error(f"Persistence Storage Error: {e}")
+            pass
 
     def run_pipeline(self):
         start_time = time.time()
@@ -282,12 +278,8 @@ class PortfolioDisciplineEngineV26_5_5:
                     ma60 = df['Close'].rolling(60).mean().iloc[-1]
                     if k in bias_ma20: bias_ma20[k] = round(((df['Close'].iloc[-1] / ma20) - 1) * 100, 2)
                     if k in regime_status: regime_status[k] = "BULL" if ma20 > ma60 else "BEAR"
-                    
-                    if k in changes_5d:
-                        changes_5d[k] = round(((df['Close'].iloc[-1] / df['Close'].iloc[-5]) - 1) * 100, 2)
-                        
-                    if k in vol_ratios:
-                        vol_ratios[k] = round(df['Volume'].tail(5).mean() / df['Volume'].tail(20).mean() if df['Volume'].tail(20).mean() > 0 else 1.0, 2)
+                    if k in changes_5d: changes_5d[k] = round(((df['Close'].iloc[-1] / df['Close'].iloc[-5]) - 1) * 100, 2)
+                    if k in vol_ratios: vol_ratios[k] = round(df['Volume'].tail(5).mean() / df['Volume'].tail(20).mean() if df['Volume'].tail(20).mean() > 0 else 1.0, 2)
 
             if data_matrix["COPPER"] is not None and len(data_matrix["COPPER"]) >= 253:
                 copper_rets = np.log(data_matrix["COPPER"]['Close'] / data_matrix["COPPER"]['Close'].shift(1))
@@ -298,16 +290,12 @@ class PortfolioDisciplineEngineV26_5_5:
                 returns_dict = {k: np.log(data_matrix[k]['Close'] / data_matrix[k]['Close'].shift(1)) for k in active_assets}
                 df_returns = pd.DataFrame(returns_dict).dropna().tail(252)
                 cov_matrix = df_returns.cov() * 252 
-                
                 for k in active_assets: vols_252d[k] = round(np.sqrt(cov_matrix.loc[k, k]) * 100, 2)
                 optimized_weights = self._solve_constrained_equal_risk_contribution(cov_matrix.values, active_assets)
                 for idx, k in enumerate(active_assets): risk_parity_weights[k] = round(optimized_weights[idx], 3)
-                
                 current_w_vec = np.array([PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"].get(x, 0.0) for x in active_assets])
                 current_portfolio_vol = round(np.sqrt(np.dot(current_w_vec.T, np.dot(cov_matrix.values, current_w_vec))) * 100, 2)
-
         except Exception as e:
-            logger.error(f"Covariance Matrix or basic indicator runtime exception: {e}")
             self.metrics["fallbacks_triggered"] += 1
 
         copper_up, copper_dn, copper_samples = self._execute_regime_adaptive_backtest(data_matrix["COPPER"], bias_ma20["COPPER"], regime_status["COPPER"])
@@ -337,15 +325,12 @@ class PortfolioDisciplineEngineV26_5_5:
         # ====================================================================================
         dynamic_targets = {}
         allocated_sum = 0.0
-        
         for asset in assets_list:
             raw_t = raw_targets[asset]
             current_w = PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"].get(asset, 0.20)
-            
             drift = raw_t - current_w
             if drift > IRON_LAWS["MAX_REBALANCE_ADJUSTMENT"]: raw_t = current_w + IRON_LAWS["MAX_REBALANCE_ADJUSTMENT"]
             elif drift < -IRON_LAWS["MAX_REBALANCE_ADJUSTMENT"]: raw_t = current_w - IRON_LAWS["MAX_REBALANCE_ADJUSTMENT"]
-            
             ceil = IRON_LAWS["MAX_BOND_CEILING"] if asset == "FIXED_INCOME" else IRON_LAWS["MAX_ASSET_CEILING"]
             dynamic_targets[asset] = float(np.clip(raw_t, 0.05, ceil))
             allocated_sum += dynamic_targets[asset]
@@ -371,7 +356,6 @@ class PortfolioDisciplineEngineV26_5_5:
             target_w_vec = np.array([dynamic_targets.get(x, 0.0) for x in active_assets])
             target_portfolio_vol = round(np.sqrt(np.dot(target_w_vec.T, np.dot(cov_matrix.values, target_w_vec))) * 100, 2)
 
-        # 🛠️ 高优先级缺陷修复一：乘以风险资产总占比（方案B），将无风险现金的稀释方差变动完全合拢，输出真实的全账户总风险波动率
         current_full_vol = round(current_portfolio_vol * (1.0 - PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"]["CASH"]), 2)
         target_full_vol = round(target_portfolio_vol * (1.0 - dynamic_targets["CASH"]), 2)
 
@@ -420,8 +404,7 @@ class PortfolioDisciplineEngineV26_5_5:
             self.portfolio_state["last_rebalance_date"] = self.beijing_time.strftime('%Y-%m-%d')
             try:
                 with open(PERSISTENCE["STATE_FILE"], 'w', encoding='utf-8') as f: json.dump(self.portfolio_state, f, indent=4)
-                logger.info(f"Rebalance trans committed to state JSON: {self.portfolio_state['last_rebalance_date']}")
-            except Exception as e: logger.error(f"IO State write exception: {e}")
+            except Exception as e: pass
 
         assets_telemetry = {}
         for k in ["GOLD", "RESOURCE", "TECH", "FIXED_INCOME"]:
@@ -439,17 +422,11 @@ class PortfolioDisciplineEngineV26_5_5:
             "cooling_days_gap": cooling_days_gap, "tech_regime": regime_status["TECH"], "behavior_status": behavior_status,
             "assets_status": assets_telemetry
         }
-        ai_insights = self.call_deepseek_brain_analyser(telemetry_payload)
-
-        # ====================================================================================
-        # 📄 PRESENTATION NLG ENGINE V26.5.5 LTS (重构：全面拥抱标准二级标题与标准化分隔排版)
-        # ====================================================================================
-        regime_desc = {
-            "BULL": "BULL_REGIME (单边多头牛市)",
-            "BEAR": "BEAR_REGIME (单边空头熊市)",
-            "NEUTRAL": "SIDEWAYS (窄幅震荡缠绕)"
-        }
         
+        # 并在智脑调用流中代入重构后的多模型并网算子
+        ai_insights = self.call_llm_brain_analyser(telemetry_payload)
+
+        regime_desc = {"BULL": "BULL_REGIME (单边多头牛市)", "BEAR": "BEAR_REGIME (单边空头熊市)", "NEUTRAL": "SIDEWAYS (窄幅震荡缠绕)"}
         report_content = f"""# 🏛️ LEO'S PORTFOLIO DYNAMIC RADAR & DISCIPLINE SYSTEM V26.5.5 LTS
 
 > **⏰ 自动化审计时间 (北京时间)**: `{self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}`
@@ -516,7 +493,6 @@ class PortfolioDisciplineEngineV26_5_5:
         historical_record["execution_seconds"] = self.metrics["execution_time_seconds"]
         self.log_to_csv(historical_record)
         
-        # 🛠️ 高优先级缺陷修复二：引入真实的变量来捕获飞书重试最终状态，杜绝不管成败盲目打印 success 的乐观误报
         push_status = "skipped (no webhook configured)"
         if NOTIFICATION["WEBHOOK_URL"]:
             push_success = False
@@ -528,15 +504,11 @@ class PortfolioDisciplineEngineV26_5_5:
                         push_success = True
                         break
                 except Exception as e: 
-                    logger.warning(f"Notification server block on attempt {attempt+1}: {e}")
                     time.sleep(NOTIFICATION["RETRY_DELAY"])
             push_status = "success" if push_success else "failed after max retries"
-            if not push_success:
-                logger.error(f"Critical: Telemetry notification failed to push after {NOTIFICATION['MAX_RETRIES']} attempts.")
 
-        logger.info(f"Pipeline finished seamlessly. Metrics: [Fetches={self.metrics['successful_fetches']}, Fallbacks={self.metrics['fallbacks_triggered']}, BoundaryViolations={self.metrics['boundary_violations']}, TimeSpent={self.metrics['execution_time_seconds']}s] | Notification: {push_status}")
+        logger.info(f"Pipeline finished seamlessly. Metrics: [Fetches={self.metrics['successful_fetches']}, Fallbacks={self.metrics['fallbacks_triggered']} | Notification: {push_status}")
 
 if __name__ == "__main__":
-    # 刚性闭环：主入口执行类名与版本号完美自洽收拢至 V26_5_5 LTS 终极量产版
     agent = PortfolioDisciplineEngineV26_5_5()
     agent.run_pipeline()
