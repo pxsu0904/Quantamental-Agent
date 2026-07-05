@@ -16,14 +16,17 @@ from scipy.optimize import minimize
 
 # 统一工程级纯中性日志规范 (完全剥离任何情绪化或股评描述)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
-logger = logging.getLogger("MatrixMasterEngine_V26_5_5")
+logger = logging.getLogger("MatrixMasterEngine_V26_5_8")
 
 # ====================================================================================
-# 🎛️ PORTFOLIO STRUCTURAL CONFIGURATION (资产大类解耦配置中心 - MVP 26.5.5 LTS)
+# 🎛️ PORTFOLIO STRUCTURAL CONFIGURATION (资产大类解耦配置中心 - MVP 26.5.8 LTS)
 # ====================================================================================
+# 全局风险资产池核心配置中心
+RISK_ASSETS = ["TECH", "RESOURCE", "GOLD", "FIXED_INCOME"]
+
 TICKERS = {
     "COPPER": "HG=F",      # COMEX期铜 (全球工业商品定价参考锚)
-    "RESOURCE": "COPX",    # 资源多头线 (矿业巨头ETF)
+    "RESOURCE": "COPX",    # 资源多头线 (矿业巨头ETF / 盛达资源国内映射)
     "TECH": "XLK",         # 科技算力线 (全球AI硬件资本池)
     "GOLD": "GLD",         # 避险贵金属 (实盘防守超配资产)
     "FIXED_INCOME": "TLT", # 跨周期长债 (宏观无风险流动性对冲资产)
@@ -43,19 +46,20 @@ FALLBACK_DATA = {
 }
 
 PORTFOLIO_ACCOUNT = {
-    "TOTAL_CAPITAL": 40000.0,  # 真实基准留学配置资金池 (元)
+    "TOTAL_CAPITAL": 40000.0,  # 真实基准配置资金池 (元)
     "CURRENT_ALLOCATION": {
         "GOLD": 0.28, "RESOURCE": 0.22, "TECH": 0.18, "FIXED_INCOME": 0.15, "CASH": 0.17
     },
     "STRATEGIC_BASELINE": {
         "GOLD": 0.15, 
         "RESOURCE": 0.20, 
-        "TECH": 0.30,          # 战术配置基础中枢上限自洽 (30%)
+        "TECH": 0.30,          # 战略配置基础中枢上限自洽 (30%)
         "FIXED_INCOME": 0.25,  # 防御长债配置基础中枢 (25%)
         "CASH": 0.10           # 刚性最低储备现金率 (10%)
     }
 }
 
+# 隔离低波防守资产持仓天花板
 IRON_LAWS = {
     "COOLING_PERIOD_DAYS": 14,         # 铁律一：真实调仓间隔必须 ≥ 14天
     "MAX_REBALANCE_ADJUSTMENT": 0.05,  # 铁律二：单次再平衡调仓步长幅度 ≤ 总资产5%
@@ -85,7 +89,7 @@ PERSISTENCE = {
     "DB_FILE": "quantamental_history_log.csv", "STATE_FILE": "portfolio_state.json"  
 }
 
-class PortfolioDisciplineEngineV26_5_5:
+class PortfolioDisciplineEngineV26_5_8:
     def __init__(self):
         self.beijing_time = datetime.now(timezone.utc) + timedelta(hours=8)
         self.metrics = {
@@ -98,16 +102,28 @@ class PortfolioDisciplineEngineV26_5_5:
         self._init_state_machine()
 
     def _execute_startup_fail_fast_check(self):
+        # 1. 校验战略基准中枢总和
         baseline_sum = sum(PORTFOLIO_ACCOUNT["STRATEGIC_BASELINE"].values())
         if abs(baseline_sum - 1.0) > 1e-4:
+            logger.critical(f"Fail-Fast Assertion Triggered: STRATEGIC_BASELINE sum must be 1.0, current is {baseline_sum}")
             raise ValueError(f"Startup Config Error: STRATEGIC_BASELINE sum mismatch ({baseline_sum})")
             
+        # 2. 校验当前持仓总和
         current_sum = sum(PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"].values())
         if abs(current_sum - 1.0) > 1e-4:
+            logger.critical(f"Fail-Fast Assertion Triggered: CURRENT_ALLOCATION sum must be 1.0, current is {current_sum}")
             raise ValueError(f"Startup Config Error: CURRENT_ALLOCATION sum mismatch ({current_sum})")
             
+        # 🛠️ 低优先级优化二修复：并网前置断言，强行检查战略现金资产比例与风控铁律最低底仓的一致性绑定假设
+        strategic_cash = PORTFOLIO_ACCOUNT["STRATEGIC_BASELINE"]["CASH"]
+        if abs(strategic_cash - IRON_LAWS["MIN_CASH_FLOOR"]) > 1e-4:
+            logger.critical(f"Fail-Fast Assertion Triggered: Strategic Cash ({strategic_cash}) must equal MIN_CASH_FLOOR ({IRON_LAWS['MIN_CASH_FLOOR']})")
+            raise ValueError("Startup Config Error: Strategic Cash vs Minimum Cash Floor logical contradiction.")
+            
+        # 3. 校验价格兜底配置
         for ticker_key in TICKERS.keys():
             if ticker_key not in FALLBACK_DATA["PRICES"]:
+                logger.critical(f"Fail-Fast Assertion Triggered: TICKER key '{ticker_key}' missing in FALLBACK_DATA.")
                 raise KeyError(f"Startup Config Error: Missing fallback index for '{ticker_key}'")
         logger.info("Startup Fail-Fast Check: All initialization configurations perfectly aligned.")
 
@@ -125,6 +141,7 @@ class PortfolioDisciplineEngineV26_5_5:
                 self.portfolio_state = default_state
                 with open(PERSISTENCE["STATE_FILE"], 'w', encoding='utf-8') as f: json.dump(default_state, f, indent=4)
         except Exception as e:
+            logger.error(f"State file synchronization breakdown fault: {e}")
             self.portfolio_state = default_state
 
     def fetch_ticker_safe(self, symbol, period="5y"):
@@ -142,7 +159,7 @@ class PortfolioDisciplineEngineV26_5_5:
                 self.metrics["successful_fetches"] += 1
                 return df
             except Exception as e:
-                pass
+                logger.warning(f"Data stream network retry event for {symbol} on attempt {attempt+1}: {e}")
         self.metrics["fallbacks_triggered"] += 1
         return None
 
@@ -167,16 +184,27 @@ class PortfolioDisciplineEngineV26_5_5:
                 return float(valid_samples['fwd_return_20d'].dropna().median()), float(valid_samples['fwd_real_downside'].dropna().median()), sample_count
             return 12.0, 5.0, sample_count
         except Exception as e:
-            pass
+            logger.warning(f"Empirical condition probability backtest layer exception: {e}")
         return 12.0, 5.0, 0
 
     def _solve_constrained_equal_risk_contribution(self, cov_matrix, active_assets):
+        """五资产约束等风险贡献（CERC）数值优化求解器"""
         n = cov_matrix.shape[0]
-        init_weights = np.repeat(1.0 / n, n)
+        
+        # 将全账户风控铁律上限，通过风险资产可用预算动态转换为内部相对口径边界
+        risk_budget = 1.0 - IRON_LAWS["MIN_CASH_FLOOR"]
         bounds = []
         for asset_key in active_assets:
-            ceil = IRON_LAWS["MAX_BOND_CEILING"] if asset_key == "FIXED_INCOME" else IRON_LAWS["MAX_ASSET_CEILING"]
-            bounds.append((0.05, ceil))
+            ceil_total = IRON_LAWS["MAX_BOND_CEILING"] if asset_key == "FIXED_INCOME" else IRON_LAWS["MAX_ASSET_CEILING"]
+            ceil_internal = ceil_total / risk_budget
+            floor_internal = 0.05 / risk_budget
+            bounds.append((floor_internal, ceil_internal))
+            
+        init_weights = np.repeat(1.0 / n, n)
+        # 🛠️ 极细微严谨性优化一修复：初始值自适应可行域裁剪，防止在收紧约束时收敛效果下降
+        for idx, (low, high) in enumerate(bounds):
+            init_weights[idx] = np.clip(init_weights[idx], low, high)
+        init_weights = init_weights / np.sum(init_weights)
             
         constraints = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0})
         def erc_objective_function(w):
@@ -192,12 +220,11 @@ class PortfolioDisciplineEngineV26_5_5:
             res = minimize(erc_objective_function, init_weights, method='SLSQP', bounds=bounds, constraints=constraints, tol=1e-8)
             if res.success: return res.x
         except Exception as e:
-            pass
+            logger.error(f"SLSQP Non-linear Optimizer execution fatal constraint break: {e}")
         diag_inv = 1.0 / np.sqrt(np.diag(cov_matrix))
         return diag_inv / np.sum(diag_inv)
 
     def call_llm_brain_analyser(self, portfolio_json_data):
-        # 🛠️ 终极对齐：全面解耦并网用户的通用大模型配置中心
         api_key = os.environ.get("LLM_API_KEY", "")
         base_url = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1")
         model_name = os.environ.get("LLM_MODEL", "deepseek-chat")
@@ -205,10 +232,8 @@ class PortfolioDisciplineEngineV26_5_5:
         if not api_key: 
             return "⚠️ 离岸云端大模型Token环境变量流未接通，已自动降级跳过智脑决策层。"
             
-        # 规范化补全补正 completions 终点路径
         url = base_url.rstrip('/')
-        if not url.endswith('/chat/completions'):
-            url += '/chat/completions'
+        if not url.endswith('/chat/completions'): url += '/chat/completions'
             
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         prompt = f"""你现在是在华尔街拥有20年大类资产配置经验的资深买方基金经理。
@@ -227,7 +252,8 @@ class PortfolioDisciplineEngineV26_5_5:
             if response.status_code == 200: 
                 return response.json()['choices'][0]['message']['content']
         except Exception as e: 
-            logger.error(f"LLM API request exception: {e}")
+            logger.error(f"LLM API request transport exception: {e}")
+        # 🛠️ 低优先级缺陷一修复：纠正脑部神姬通道的错别字笔误
         return "⚠️ LLM 脑部神经通道偶发性阻塞，请先根据控制台客观数据进行校准。"
 
     def log_to_csv(self, record_dict):
@@ -243,7 +269,7 @@ class PortfolioDisciplineEngineV26_5_5:
                 df_combined.drop_duplicates(subset=["audit_date"], keep="last", inplace=True)
                 df_combined.to_csv(PERSISTENCE["DB_FILE"], index=False, encoding="utf-8-sig")
         except Exception as e:
-            pass
+            logger.error(f"Persistence CSV Database write stream collision error: {e}")
 
     def run_pipeline(self):
         start_time = time.time()
@@ -258,34 +284,31 @@ class PortfolioDisciplineEngineV26_5_5:
         data_matrix = {}
         for key, symbol in TICKERS.items(): data_matrix[key] = self.fetch_ticker_safe(symbol)
             
-        vol_ratios = {k: 1.0 for k in ["RESOURCE", "TECH", "GOLD", "FIXED_INCOME"]}
-        changes_5d = {k: FALLBACK_DATA["CHANGES"].get(k, 0.0) for k in ["COPPER", "RESOURCE", "TECH", "GOLD", "FIXED_INCOME"]}
+        changes_5d = {k: FALLBACK_DATA["CHANGES"].get(k, 0.0) for k in ["COPPER"] + RISK_ASSETS}
         prices = {k: FALLBACK_DATA["PRICES"][k] for k in TICKERS.keys()}
-        bias_ma20 = {"TECH": 0.0, "RESOURCE": 0.0, "GOLD": 0.0, "COPPER": 0.0}
-        regime_status = {"TECH": "NEUTRAL", "RESOURCE": "NEUTRAL", "GOLD": "NEUTRAL", "COPPER": "NEUTRAL"}
-        assets_list = ["TECH", "RESOURCE", "GOLD", "FIXED_INCOME"]
-        risk_parity_weights = {k: 0.25 for k in assets_list}
-        vols_252d = {k: 20.0 for k in assets_list}
+        bias_ma20 = {"TECH": 0.0, "RESOURCE": 0.0, "GOLD": 0.0, "COPPER": 0.0, "FIXED_INCOME": 0.0}
+        regime_status = {"TECH": "NEUTRAL", "RESOURCE": "NEUTRAL", "GOLD": "NEUTRAL", "COPPER": "NEUTRAL", "FIXED_INCOME": "NEUTRAL"}
+        risk_parity_weights = {k: 0.25 for k in RISK_ASSETS}
+        vols_252d = {k: 20.0 for k in RISK_ASSETS}
         
         try:
             for k in TICKERS.keys():
                 if data_matrix[k] is not None: prices[k] = data_matrix[k]['Close'].iloc[-1]
                 
-            for k in ["RESOURCE", "TECH", "GOLD", "COPPER", "FIXED_INCOME", "DXY", "US10Y"]:
+            for k in RISK_ASSETS + ["COPPER", "DXY", "US10Y"]:
                 df = data_matrix[k]
                 if df is not None and len(df) >= 60:
                     ma20 = df['Close'].rolling(20).mean().iloc[-1]
                     ma60 = df['Close'].rolling(60).mean().iloc[-1]
-                    if k in bias_ma20: bias_ma20[k] = round(((df['Close'].iloc[-1] / ma20) - 1) * 100, 2)
-                    if k in regime_status: regime_status[k] = "BULL" if ma20 > ma60 else "BEAR"
+                    bias_ma20[k] = round(((df['Close'].iloc[-1] / ma20) - 1) * 100, 2)
+                    regime_status[k] = "BULL" if ma20 > ma60 else "BEAR"
                     if k in changes_5d: changes_5d[k] = round(((df['Close'].iloc[-1] / df['Close'].iloc[-5]) - 1) * 100, 2)
-                    if k in vol_ratios: vol_ratios[k] = round(df['Volume'].tail(5).mean() / df['Volume'].tail(20).mean() if df['Volume'].tail(20).mean() > 0 else 1.0, 2)
 
             if data_matrix["COPPER"] is not None and len(data_matrix["COPPER"]) >= 253:
                 copper_rets = np.log(data_matrix["COPPER"]['Close'] / data_matrix["COPPER"]['Close'].shift(1))
                 copper_vol_252d = round(copper_rets.dropna().tail(252).std() * np.sqrt(252) * 100, 2)
 
-            active_assets = [k for k in assets_list if data_matrix[k] is not None and len(data_matrix[k]) >= 253]
+            active_assets = [k for k in RISK_ASSETS if data_matrix[k] is not None and len(data_matrix[k]) >= 253]
             if len(active_assets) >= 3:
                 returns_dict = {k: np.log(data_matrix[k]['Close'] / data_matrix[k]['Close'].shift(1)) for k in active_assets}
                 df_returns = pd.DataFrame(returns_dict).dropna().tail(252)
@@ -296,68 +319,105 @@ class PortfolioDisciplineEngineV26_5_5:
                 current_w_vec = np.array([PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"].get(x, 0.0) for x in active_assets])
                 current_portfolio_vol = round(np.sqrt(np.dot(current_w_vec.T, np.dot(cov_matrix.values, current_w_vec))) * 100, 2)
         except Exception as e:
+            logger.error(f"Covariance Matrix matrix runtime execution crash exception: {e}")
             self.metrics["fallbacks_triggered"] += 1
 
         copper_up, copper_dn, copper_samples = self._execute_regime_adaptive_backtest(data_matrix["COPPER"], bias_ma20["COPPER"], regime_status["COPPER"])
         tech_up, tech_dn, tech_samples = self._execute_regime_adaptive_backtest(data_matrix["TECH"], bias_ma20["TECH"], regime_status["TECH"])
         gold_up, gold_dn, gold_samples = self._execute_regime_adaptive_backtest(data_matrix["GOLD"], bias_ma20["GOLD"], regime_status["GOLD"])
+        # 🛠️ 低优先级功能完整性补充：将核心防守资产长债（TLT）并网条件概率回测时序矩阵
+        bond_up, bond_dn, bond_samples = self._execute_regime_adaptive_backtest(data_matrix["FIXED_INCOME"], bias_ma20["FIXED_INCOME"], regime_status["FIXED_INCOME"])
         
         odds_matrix = {
             "COPPER": {"upside": round(copper_up, 1), "downside": max(copper_dn, IRON_LAWS["MIN_COPPER_DOWNSIDE_FLOOR"]), "odds": round(copper_up / max(copper_dn, 1.0), 2), "samples": copper_samples},
             "TECH": {"upside": round(tech_up, 1), "downside": round(tech_dn, 2), "odds": round(tech_up / max(tech_dn, 1.0), 2), "samples": tech_samples},
-            "GOLD": {"upside": round(gold_up, 1), "downside": round(gold_dn, 2), "odds": round(gold_up / max(gold_dn, 1.0), 2), "samples": gold_samples}
+            "GOLD": {"upside": round(gold_up, 1), "downside": round(gold_dn, 2), "odds": round(gold_up / max(gold_dn, 1.0), 2), "samples": gold_samples},
+            "FIXED_INCOME": {"upside": round(bond_up, 1), "downside": round(bond_dn, 2), "odds": round(bond_up / max(bond_dn, 1.0), 2), "samples": bond_samples}
         }
+
+        for k in ["COPPER", "TECH", "GOLD", "FIXED_INCOME"]:
+            if odds_matrix[k]["samples"] < IRON_LAWS["MIN_HISTORICAL_SAMPLES"]:
+                logger.warning(f"实证概率警报：标的 {k} 有效历史同质样本量({odds_matrix[k]['samples']}个)未达门槛，触发防噪声降级保护。")
 
         macro_radar = {"DXY_MA20_CROSS": "UNKNOWN", "US10Y_MA20_CROSS": "UNKNOWN"}
         if data_matrix["DXY"] is not None and data_matrix["US10Y"] is not None:
             macro_radar["DXY_MA20_CROSS"] = "BELOW_MA20 (流动性边际释放)" if prices["DXY"] < data_matrix["DXY"]['Close'].rolling(20).mean().iloc[-1] else "ABOVE_MA20 (流动性收紧)"
             macro_radar["US10Y_MA20_CROSS"] = "BELOW_MA20 (重力压制减弱)" if prices["US10Y"] < data_matrix["US10Y"]['Close'].rolling(20).mean().iloc[-1] else "ABOVE_MA20 (重力压制增强)"
 
-        raw_targets = {}
+        # 风险资产内部子空间口径严格对齐后加权融合
+        total_strategic_risk_w = sum(PORTFOLIO_ACCOUNT["STRATEGIC_BASELINE"][a] for a in RISK_ASSETS)
+        strategic_internal = {a: PORTFOLIO_ACCOUNT["STRATEGIC_BASELINE"][a] / total_strategic_risk_w for a in RISK_ASSETS}
+
         bf = IRON_LAWS["BLEND_FACTOR"]
-        for asset in assets_list:
-            strategic_w = PORTFOLIO_ACCOUNT["STRATEGIC_BASELINE"][asset]
-            rp_w = risk_parity_weights.get(asset, strategic_w)
-            raw_targets[asset] = (1.0 - bf) * strategic_w + bf * rp_w
+        blended_internal = {}
+        for asset in RISK_ASSETS:
+            rp_w = risk_parity_weights.get(asset, strategic_internal[asset])
+            blended_internal[asset] = (1.0 - bf) * strategic_internal[asset] + bf * rp_w
+            
+        risk_budget = 1.0 - IRON_LAWS["MIN_CASH_FLOOR"]
+        raw_targets = {a: blended_internal[a] * risk_budget for a in RISK_ASSETS}
 
         # ====================================================================================
         # 🔒 🔥 【五大铁律 Re-Normalization 严格执行中台】
         # ====================================================================================
         dynamic_targets = {}
         allocated_sum = 0.0
-        for asset in assets_list:
+        for asset in RISK_ASSETS:
             raw_t = raw_targets[asset]
             current_w = PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"].get(asset, 0.20)
             drift = raw_t - current_w
             if drift > IRON_LAWS["MAX_REBALANCE_ADJUSTMENT"]: raw_t = current_w + IRON_LAWS["MAX_REBALANCE_ADJUSTMENT"]
             elif drift < -IRON_LAWS["MAX_REBALANCE_ADJUSTMENT"]: raw_t = current_w - IRON_LAWS["MAX_REBALANCE_ADJUSTMENT"]
-            ceil = IRON_LAWS["MAX_BOND_CEILING"] if asset == "FIXED_INCOME" else IRON_LAWS["MAX_ASSET_CEILING"]
-            dynamic_targets[asset] = float(np.clip(raw_t, 0.05, ceil))
+            
+            ceil_total = IRON_LAWS["MAX_BOND_CEILING"] if asset == "FIXED_INCOME" else IRON_LAWS["MAX_ASSET_CEILING"]
+            dynamic_targets[asset] = float(np.clip(raw_t, 0.05, ceil_total))
             allocated_sum += dynamic_targets[asset]
             
         available_risk_space = 1.0 - IRON_LAWS["MIN_CASH_FLOOR"] 
         if allocated_sum > available_risk_space:
             scale_factor = available_risk_space / allocated_sum
             allocated_sum = 0.0
-            for asset in assets_list:
+            for asset in RISK_ASSETS:
                 scaled_w = round(dynamic_targets[asset] * scale_factor, 4)
                 dynamic_targets[asset] = max(scaled_w, 0.05)
                 allocated_sum += dynamic_targets[asset]
                 
         if round(allocated_sum, 4) > round(available_risk_space, 4):
             diff = round(allocated_sum - available_risk_space, 4)
-            max_asset = max(dynamic_targets, key=dynamic_targets.get)
-            dynamic_targets[max_asset] = round(dynamic_targets[max_asset] - diff, 4)
-            dynamic_targets["CASH"] = IRON_LAWS["MIN_CASH_FLOOR"]
-        else:
-            dynamic_targets["CASH"] = round(1.0 - allocated_sum, 4)
+            sorted_by_size = sorted(dynamic_targets.keys(), key=lambda x: dynamic_targets[x], reverse=True)
+            for asset in sorted_by_size:
+                if diff <= 0: break
+                current_val = dynamic_targets[asset]
+                slack = max(0.0, current_val - 0.05)
+                sub_amt = min(diff, slack)
+                dynamic_targets[asset] = round(current_val - sub_amt, 4)
+                diff -= sub_amt
+            allocated_sum = sum(dynamic_targets[asset] for asset in RISK_ASSETS)
+
+        if round(allocated_sum, 4) > round(available_risk_space, 4):
+            logger.warning("风控中台断言警报：所有标的均触及铁律下限，启动资产总预算硬性按比例统一压缩机制。")
+            scale = available_risk_space / allocated_sum
+            for asset in RISK_ASSETS:
+                dynamic_targets[asset] = round(dynamic_targets[asset] * scale, 4)
+            allocated_sum = available_risk_space
+
+        dynamic_targets["CASH"] = round(1.0 - allocated_sum, 4)
+
+        # 🛠️ 极细微严谨性优化二修复：在资产全归一化尾置节点，增加全账户权重和的闭环一致性硬校验
+        final_account_sum = sum(dynamic_targets.values())
+        if abs(final_account_sum - 1.0) > 1e-4:
+            logger.warning(f"风控中台对账警报：平账后总权重精度越界 ({final_account_sum})，执行微调纠偏。")
+            diff_rem = final_account_sum - 1.0
+            adjustable_asset = min((k for k in RISK_ASSETS if dynamic_targets[k] > 0.05), key=lambda x: dynamic_targets[x])
+            dynamic_targets[adjustable_asset] = round(dynamic_targets[adjustable_asset] - diff_rem, 4)
 
         if cov_matrix is not None and len(active_assets) >= 3:
             target_w_vec = np.array([dynamic_targets.get(x, 0.0) for x in active_assets])
             target_portfolio_vol = round(np.sqrt(np.dot(target_w_vec.T, np.dot(cov_matrix.values, target_w_vec))) * 100, 2)
 
-        current_full_vol = round(current_portfolio_vol * (1.0 - PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"]["CASH"]), 2)
-        target_full_vol = round(target_portfolio_vol * (1.0 - dynamic_targets["CASH"]), 2)
+        # 波动率口径完全自洽
+        current_full_vol = current_portfolio_vol
+        target_full_vol = target_portfolio_vol
 
         # ====================================================================================
         # 🧠 BEHAVIOR RISK ENGINE (时间锁事件驱动状态中台)
@@ -380,7 +440,7 @@ class PortfolioDisciplineEngineV26_5_5:
         portfolio_map = {}
         asset_title_mapping = {"GOLD": "黄金资产GLD", "RESOURCE": "资源多头矿端", "TECH": "科技算力硬件", "FIXED_INCOME": "跨周期长债TLT"}
         
-        for asset in ["GOLD", "RESOURCE", "TECH", "FIXED_INCOME"]:
+        for asset in RISK_ASSETS:
             current_w = PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"][asset]
             target_w = dynamic_targets[asset]
             delta_w = target_w - current_w
@@ -404,10 +464,11 @@ class PortfolioDisciplineEngineV26_5_5:
             self.portfolio_state["last_rebalance_date"] = self.beijing_time.strftime('%Y-%m-%d')
             try:
                 with open(PERSISTENCE["STATE_FILE"], 'w', encoding='utf-8') as f: json.dump(self.portfolio_state, f, indent=4)
-            except Exception as e: pass
+            except Exception as e:
+                logger.error(f"State machine serialization backwrite exception: {e}")
 
         assets_telemetry = {}
-        for k in ["GOLD", "RESOURCE", "TECH", "FIXED_INCOME"]:
+        for k in RISK_ASSETS:
             assets_telemetry[k] = {
                 "current_pct": portfolio_map[k]["current_pct"],
                 "target_pct": portfolio_map[k]["target_pct"],
@@ -423,15 +484,23 @@ class PortfolioDisciplineEngineV26_5_5:
             "assets_status": assets_telemetry
         }
         
-        # 并在智脑调用流中代入重构后的多模型并网算子
         ai_insights = self.call_llm_brain_analyser(telemetry_payload)
 
+        # 报告层自动为样本不足激活架构诚实提示
+        copper_sample_str = f"{odds_matrix['COPPER']['samples']} 个同质状态样本" if odds_matrix['COPPER']['samples'] >= IRON_LAWS["MIN_HISTORICAL_SAMPLES"] else "⚠️ 样本量不足 (降级参考值)"
+        tech_sample_str = f"{odds_matrix['TECH']['samples']} 个同质状态样本" if odds_matrix['TECH']['samples'] >= IRON_LAWS["MIN_HISTORICAL_SAMPLES"] else "⚠️ 样本量不足 (降级参考值)"
+        gold_sample_str = f"{odds_matrix['GOLD']['samples']} 个同质状态样本" if odds_matrix['GOLD']['samples'] >= IRON_LAWS["MIN_HISTORICAL_SAMPLES"] else "⚠️ 样本量不足 (降级参考值)"
+        bond_sample_str = f"{odds_matrix['FIXED_INCOME']['samples']} 个同质状态样本" if odds_matrix['FIXED_INCOME']['samples'] >= IRON_LAWS["MIN_HISTORICAL_SAMPLES"] else "⚠️ 样本量不足 (降级参考值)"
+
+        # ====================================================================================
+        # 📄 PRESENTATION NLG ENGINE V26.5.8 LTS (标准二级标题与全资产响应式排版)
+        # ====================================================================================
         regime_desc = {"BULL": "BULL_REGIME (单边多头牛市)", "BEAR": "BEAR_REGIME (单边空头熊市)", "NEUTRAL": "SIDEWAYS (窄幅震荡缠绕)"}
-        report_content = f"""# 🏛️ LEO'S PORTFOLIO DYNAMIC RADAR & DISCIPLINE SYSTEM V26.5.5 LTS
+        report_content = f"""# 🏛️ LEO'S PORTFOLIO DYNAMIC RADAR & DISCIPLINE SYSTEM V26.5.8 LTS
 
 > **⏰ 自动化审计时间 (北京时间)**: `{self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}`
 > **⚙️ 核心底座**: 5大资产完全解耦状态机 (Evidence-Based 长期支持完全自洽版)
-> **⚠️ 诚实性免责声明**: 本系统已全量剔除硬编码参数，数学矩阵完全基于海外时序市场真数。
+> **⚠️ 诚实性免责声明**: 本系统已全量剔除硬编码参数，数学矩阵完全基于海外时序市场真数。全账户风险度包含无风险现金资产摊薄。
 
 ---
 
@@ -471,9 +540,10 @@ class PortfolioDisciplineEngineV26_5_5:
 
 | 资产名称 (代码) | 20日期望空间 | 20日远期回撤 | 胜率/赔率比 | 5日动态涨跌 | MA20乖离 | 滚动历史年化波动 | 有效历史样本量 |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| 国际期铜 (`{TICKERS['COPPER']}`) | +{odds_matrix['COPPER']['upside']}% | -{odds_matrix['COPPER']['downside']}% | {odds_matrix['COPPER']['odds']} | {changes_5d['COPPER']}% | {bias_ma20['COPPER']}% | {copper_vol_252d}% | {odds_matrix['COPPER']['samples']} 个同质状态样本 |
-| 科技硬件 (`{TICKERS['TECH']}`) | +{odds_matrix['TECH']['upside']}% | -{odds_matrix['TECH']['downside']}% | {odds_matrix['TECH']['odds']} | {changes_5d['TECH']}% | {bias_ma20['TECH']}% | {vols_252d['TECH']}% | {odds_matrix['TECH']['samples']} 个同质状态样本 |
-| 黄金避险 (`{TICKERS['GOLD']}`) | +{odds_matrix['GOLD']['upside']}% | -{odds_matrix['GOLD']['downside']}% | {odds_matrix['GOLD']['odds']} | {changes_5d['GOLD']}% | {bias_ma20['GOLD']}% | {vols_252d['GOLD']}% | {odds_matrix['GOLD']['samples']} 个同质状态样本 |
+| 国际期铜 (`{TICKERS['COPPER']}`) | +{odds_matrix['COPPER']['upside']}% | -{odds_matrix['COPPER']['downside']}% | {odds_matrix['COPPER']['odds']} | {changes_5d['COPPER']}% | {bias_ma20['COPPER']}% | {copper_vol_252d}% | {copper_sample_str} |
+| 科技硬件 (`{TICKERS['TECH']}`) | +{odds_matrix['TECH']['upside']}% | -{odds_matrix['TECH']['downside']}% | {odds_matrix['TECH']['odds']} | {changes_5d['TECH']}% | {bias_ma20['TECH']}% | {vols_252d['TECH']}% | {tech_sample_str} |
+| 黄金避险 (`{TICKERS['GOLD']}`) | +{odds_matrix['GOLD']['upside']}% | -{odds_matrix['GOLD']['downside']}% | {odds_matrix['GOLD']['odds']} | {changes_5d['GOLD']}% | {bias_ma20['GOLD']}% | {vols_252d['GOLD']}% | {gold_sample_str} |
+| 跨周期长债 (`{TICKERS['FIXED_INCOME']}`) | +{odds_matrix['FIXED_INCOME']['upside']}% | -{odds_matrix['FIXED_INCOME']['downside']}% | {odds_matrix['FIXED_INCOME']['odds']} | {changes_5d['FIXED_INCOME']}% | {bias_ma20['FIXED_INCOME']}% | {vols_252d['FIXED_INCOME']}% | {bond_sample_str} |
 
 ---
 
@@ -503,12 +573,18 @@ class PortfolioDisciplineEngineV26_5_5:
                     if res.status_code == 200:
                         push_success = True
                         break
+                    else:
+                        logger.warning(f"Notification server returned code {res.status_code} on attempt {attempt+1}")
                 except Exception as e: 
+                    logger.warning(f"Notification channel warning on attempt {attempt+1}: {e}")
                     time.sleep(NOTIFICATION["RETRY_DELAY"])
             push_status = "success" if push_success else "failed after max retries"
+            if not push_success:
+                logger.error(f"Critical error: Telemetry notification completely blocked after max retries.")
 
-        logger.info(f"Pipeline finished seamlessly. Metrics: [Fetches={self.metrics['successful_fetches']}, Fallbacks={self.metrics['fallbacks_triggered']} | Notification: {push_status}")
+        logger.info(f"Pipeline finished seamlessly. Metrics: [Fetches={self.metrics['successful_fetches']}, Fallbacks={self.metrics['fallbacks_triggered']}, BoundaryViolations={self.metrics['boundary_violations']}, TimeSpent={self.metrics['execution_time_seconds']}s] | Notification: {push_status}")
 
 if __name__ == "__main__":
-    agent = PortfolioDisciplineEngineV26_5_5()
+    # 🛠️ 终极对齐：将执行端初始化彻底修正为与顶层类名严格合拢的 V26_5_8
+    agent = PortfolioDisciplineEngineV26_5_8()
     agent.run_pipeline()
