@@ -25,10 +25,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install yfinance pandas numpy scipy requests
 
-      - name: 4. 全权点火启动多资产量化基本面核心引擎
+    - name: 4. 全权点火启动多资产量化基本面核心引擎
         env:
           ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
         run: |
           python main.py
 
