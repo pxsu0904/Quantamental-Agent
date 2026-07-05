@@ -16,10 +16,10 @@ from scipy.optimize import minimize
 
 # 统一工程级纯中性日志规范 (完全剥离任何情绪化或股评描述)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
-logger = logging.getLogger("MatrixMasterEngine_V26_5_4")
+logger = logging.getLogger("MatrixMasterEngine_V26_5_5")
 
 # ====================================================================================
-# 🎛️ PORTFOLIO STRUCTURAL CONFIGURATION (资产大类解耦配置中心 - MVP 26.5.4 LTS)
+# 🎛️ PORTFOLIO STRUCTURAL CONFIGURATION (资产大类解耦配置中心 - MVP 26.5.5 LTS)
 # ====================================================================================
 TICKERS = {
     "COPPER": "HG=F",      # COMEX期铜 (全球工业商品定价参考锚)
@@ -50,7 +50,7 @@ PORTFOLIO_ACCOUNT = {
     "STRATEGIC_BASELINE": {
         "GOLD": 0.15, 
         "RESOURCE": 0.20, 
-        "TECH": 0.30,          # 战略配置基础中枢上限自洽 (30%)
+        "TECH": 0.30,          # 战术配置基础中枢上限自洽 (30%)
         "FIXED_INCOME": 0.25,  # 防御长债配置基础中枢 (25%)
         "CASH": 0.10           # 刚性最低储备现金率 (10%)
     }
@@ -66,7 +66,7 @@ IRON_LAWS = {
     "BIAS_WINDOW_THRESHOLD": 2.0,      # 历史相似状态对称切片邻域 (±2.0%)
     "MIN_HISTORICAL_SAMPLES": 20,      # 最小历史有效同质样本数门槛
     "REBALANCE_TRIGGER_THRESHOLD": 0.025, # 战术再平衡激活起扣点 (2.5%)
-    "BLEND_FACTOR": 0.30,              # 风加权融合比例
+    "BLEND_FACTOR": 0.30,              # 战术分配融合系数权重
     "MIN_COPPER_DOWNSIDE_FLOOR": 3.0   # 国际期铜下跌空间最低技术保护底噪 (%)
 }
 
@@ -86,7 +86,7 @@ PERSISTENCE = {
     "DB_FILE": "quantamental_history_log.csv", "STATE_FILE": "portfolio_state.json"  
 }
 
-class PortfolioDisciplineEngineV26_5_4:
+class PortfolioDisciplineEngineV26_5_5:
     def __init__(self):
         self.beijing_time = datetime.now(timezone.utc) + timedelta(hours=8)
         
@@ -97,16 +97,23 @@ class PortfolioDisciplineEngineV26_5_4:
             "execution_time_seconds": 0.0
         }
         
-        # 并网启动配置一致性校验模块，严格执行 Fail-Fast 工业规范
         self._execute_startup_fail_fast_check()
         self._init_state_machine()
 
     def _execute_startup_fail_fast_check(self):
+        # 1. 校验战略基准中枢
         baseline_sum = sum(PORTFOLIO_ACCOUNT["STRATEGIC_BASELINE"].values())
         if abs(baseline_sum - 1.0) > 1e-4:
             logger.critical(f"Fail-Fast Assertion Triggered: STRATEGIC_BASELINE sum must be 1.0, current is {baseline_sum}")
             raise ValueError(f"Startup Config Error: STRATEGIC_BASELINE sum mismatch ({baseline_sum})")
             
+        # 🛠️ 中优先级优化三：并网当前账户持仓权重和校验，彻底杜绝手动调仓改错引起的资产缺口偏差
+        current_sum = sum(PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"].values())
+        if abs(current_sum - 1.0) > 1e-4:
+            logger.critical(f"Fail-Fast Assertion Triggered: CURRENT_ALLOCATION sum must be 1.0, current is {current_sum}")
+            raise ValueError(f"Startup Config Error: CURRENT_ALLOCATION sum mismatch ({current_sum})")
+            
+        # 2. 校验兜底真数名池
         for ticker_key in TICKERS.keys():
             if ticker_key not in FALLBACK_DATA["PRICES"]:
                 logger.critical(f"Fail-Fast Assertion Triggered: TICKER key '{ticker_key}' missing in FALLBACK_DATA Prices matrix.")
@@ -364,6 +371,10 @@ class PortfolioDisciplineEngineV26_5_4:
             target_w_vec = np.array([dynamic_targets.get(x, 0.0) for x in active_assets])
             target_portfolio_vol = round(np.sqrt(np.dot(target_w_vec.T, np.dot(cov_matrix.values, target_w_vec))) * 100, 2)
 
+        # 🛠️ 高优先级缺陷修复一：乘以风险资产总占比（方案B），将无风险现金的稀释方差变动完全合拢，输出真实的全账户总风险波动率
+        current_full_vol = round(current_portfolio_vol * (1.0 - PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"]["CASH"]), 2)
+        target_full_vol = round(target_portfolio_vol * (1.0 - dynamic_targets["CASH"]), 2)
+
         # ====================================================================================
         # 🧠 BEHAVIOR RISK ENGINE (时间锁事件驱动状态中台)
         # ====================================================================================
@@ -424,73 +435,108 @@ class PortfolioDisciplineEngineV26_5_4:
             "audit_date": self.beijing_time.strftime('%Y-%m-%d'),
             "live_dxy": prices["DXY"], "live_us10y_pct": prices["US10Y"],
             "dxy_cross": macro_radar["DXY_MA20_CROSS"], "us10y_cross": macro_radar["US10Y_MA20_CROSS"],
-            "current_portfolio_vol": current_portfolio_vol, "target_portfolio_vol": target_portfolio_vol,
+            "current_portfolio_vol": current_full_vol, "target_portfolio_vol": target_full_vol,
             "cooling_days_gap": cooling_days_gap, "tech_regime": regime_status["TECH"], "behavior_status": behavior_status,
             "assets_status": assets_telemetry
         }
         ai_insights = self.call_deepseek_brain_analyser(telemetry_payload)
 
         # ====================================================================================
-        # 📄 PRESENTATION NLG ENGINE V26.5.4 LTS (定长纯空格物理对齐排版)
+        # 📄 PRESENTATION NLG ENGINE V26.5.5 LTS (重构：全面拥抱标准二级标题与标准化分隔排版)
         # ====================================================================================
-        regime_desc = {"BULL": "BULL_REGIME (单边多头牛市)", "BEAR": "BEAR_REGIME (单边空头熊市)", "NEUTRAL": "SIDEWAYS (窄幅震荡缠绕)"}
-        report_content = f"""
-🏛️ 【LEO'S PORTFOLIO DYNAMIC RADAR & DISCIPLINE SYSTEM V26.5.4 LTS】
-⏰ 自动化审计时间 (北京时间): {self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}
-⚙️ 核心动态底座实证架构: 5大资产完全解耦状态机 (Evidence-Based 长期支持完全自洽版)
-⚠️ 架构诚实性免责声明：本系统已全量剔除硬编码假基本面参数，下层数学矩阵完全基于真实的海外时序市场真数。
+        regime_desc = {
+            "BULL": "BULL_REGIME (单边多头牛市)",
+            "BEAR": "BEAR_REGIME (单边空头熊市)",
+            "NEUTRAL": "SIDEWAYS (窄幅震荡缠绕)"
+        }
+        
+        report_content = f"""# 🏛️ LEO'S PORTFOLIO DYNAMIC RADAR & DISCIPLINE SYSTEM V26.5.5 LTS
 
-📊 一、【GLOBAL MACRO REGIME RADAR / 全球流动性宏观真数观察站】
-  离岸美元指数 (DXY)   {prices['DXY']} -> 当前状态: {macro_radar['DXY_MA20_CROSS']}
-  美国10Y国债名义利率 (^TNX)  {prices['US10Y']}% -> 当前状态: {macro_radar['US10Y_MA20_CROSS']}
+> **⏰ 自动化审计时间 (北京时间)**: `{self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}`
+> **⚙️ 核心底座**: 5大资产完全解耦状态机 (Evidence-Based 长期支持完全自洽版)
+> **⚠️ 诚实性免责声明**: 本系统已全量剔除硬编码参数，数学矩阵完全基于海外时序市场真数。
 
-🧠 二、【BEHAVIOR RISK CONTROL GATE / 行为金融学周期时间锁】
-  核心量化执纪状态: {behavior_status}
-  科技硬件大类(XLK) 过滤器当前识别分区: {regime_desc[regime_status['TECH']]}
+---
 
-📋 三、【DYNAMIC CONSTRAINED RISK-PARITY BALANCER / 动态五资产约束风险平价再平衡中台】
-  基准账户总资产池: {total_cap:,} 元 (当前实际储备现金占比: {round(PORTFOLIO_ACCOUNT['CURRENT_ALLOCATION']['CASH']*100, 1)}% -> 战术偏离期望目标: {round(dynamic_targets['CASH']*100, 1)}%)
-  全账户当前真实总风险: {current_portfolio_vol}% 真实年化总波动度 | 调仓后全账户预期风险: {target_portfolio_vol}% 预期年化总波动度
-  [资产类别简写]    [当前占比]    [战术目标铁律]    [调仓资金缺口]    [开枪调仓状态机指令]
-  黄金资产GLD    {portfolio_map['GOLD']['current_pct']}%           {portfolio_map['GOLD']['target_pct']}%           {portfolio_map['GOLD']['infusion']:,} 元       {portfolio_map['GOLD']['status']}
-  资源多头矿端   {portfolio_map['RESOURCE']['current_pct']}%           {portfolio_map['RESOURCE']['target_pct']}%           {portfolio_map['RESOURCE']['infusion']:,} 元       {portfolio_map['RESOURCE']['status']}
-  科技算力硬件   {portfolio_map['TECH']['current_pct']}%           {portfolio_map['TECH']['target_pct']}%           {portfolio_map['TECH']['infusion']:,} 元       {portfolio_map['TECH']['status']}
-  跨周期长债TLT  {portfolio_map['FIXED_INCOME']['current_pct']}%           {portfolio_map['FIXED_INCOME']['target_pct']}%           {portfolio_map['FIXED_INCOME']['infusion']:,} 元       {portfolio_map['FIXED_INCOME']['status']}
+## 📊 一、 GLOBAL MACRO REGIME RADAR / 全球流动性宏观真数观察站
 
-💎 四、【RISK-REWARD ODDS MATRIX / 跨资产风险收益比量化实证概率矩阵】
-  (注：回撤支撑已由 Forward MDD 概率引擎完全激活，为未来20交易日历史前向滑动窗口最大潜在回撤中位数；空间由历史条件概率回溯计算)
-  [资产名称及代码]    [20日期望历史空间]    [20日远期回撤防线]    [胜率/赔率比]    [5日动态涨跌]    [MA20截面乖离]    [滚动历史年化波动]    [有效历史样本量]
-  国际期铜 ({TICKERS['COPPER']})        +{odds_matrix['COPPER']['upside']}%             -{odds_matrix['COPPER']['downside']}%             {odds_matrix['COPPER']['odds']}            {changes_5d['COPPER']}%            {bias_ma20['COPPER']}%               {copper_vol_252d}%          {odds_matrix['COPPER']['samples']} 个同质状态样本
-  科技硬件 ({TICKERS['TECH']})        +{odds_matrix['TECH']['upside']}%             -{odds_matrix['TECH']['downside']}%             {odds_matrix['TECH']['odds']}            {changes_5d['TECH']}%            {bias_ma20['TECH']}%               {vols_252d['TECH']}%          {odds_matrix['TECH']['samples']} 个同质状态样本
-  黄金避险 ({TICKERS['GOLD']})        +{odds_matrix['GOLD']['upside']}%             -{odds_matrix['GOLD']['downside']}%             {odds_matrix['GOLD']['odds']}            {changes_5d['GOLD']}%            {bias_ma20['GOLD']}%               {vols_252d['GOLD']}%          {odds_matrix['GOLD']['samples']} 个同质状态样本
+* **🇺🇸 离岸美元指数 (DXY)**：`{prices['DXY']}` → **`{macro_radar['DXY_MA20_CROSS']}`**
+* **📈 美债 10Y 名义利率 (^TNX)**：`{prices['US10Y']}%` → **`{macro_radar['US10Y_MA20_CROSS']}`**
 
-█========================================================================================================================█
-🎯 五、【DEEPSEEK STRATEGIC BRAIN INSIGHTS / 智脑原生数据交叉验证宏观归因内参】
+---
+
+## 🧠 二、 BEHAVIOR RISK CONTROL GATE / 行为金融学周期时间锁
+
+* **核心量化执纪状态**：{behavior_status}
+* **科技硬件大类(XLK) 过滤器当前识别分区**：🟢 **`{regime_desc.get(regime_status['TECH'], regime_status['TECH'])}`**
+
+---
+
+## 📋 三、 DYNAMIC RISK-PARITY BALANCER / 动态资产约束风险平价再平衡中台
+
+* **💰 基准账户总资产池**：`{total_cap:,}` 元
+* **🛡️ 流动性防线（现金）**：当前实际储备 `{round(PORTFOLIO_ACCOUNT['CURRENT_ALLOCATION']['CASH']*100, 1)}%` → 战术偏离期望目标 `{round(dynamic_targets['CASH']*100, 1)}%`
+* **⚖️ 全账户风险波动度**：全账户当前真实总风险 `{current_full_vol}%` 真实年化总波动度 | 调仓后全账户预期风险 `{target_full_vol}%` 预期年化总波动度
+
+### 🔄 战术再平衡对账单
+
+| 资产类别简写 | 当前占比 | 战术目标铁律 | 调仓资金缺口 | 开枪调仓状态机指令 |
+| :--- | :---: | :---: | :---: | :--- |
+| **黄金资产 (GLD)** | {portfolio_map['GOLD']['current_pct']}% | {portfolio_map['GOLD']['target_pct']}% | **{portfolio_map['GOLD']['infusion']:,} 元** | {portfolio_map['GOLD']['status']} |
+| **资源多头矿端 (COPX)** | {portfolio_map['RESOURCE']['current_pct']}% | {portfolio_map['RESOURCE']['target_pct']}% | **{portfolio_map['RESOURCE']['infusion']:,} 元** | {portfolio_map['RESOURCE']['status']} |
+| **科技算力硬件 (XLK)** | {portfolio_map['TECH']['current_pct']}% | {portfolio_map['TECH']['target_pct']}% | **{portfolio_map['TECH']['infusion']:,} 元** | {portfolio_map['TECH']['status']} |
+| **跨周期长债 (TLT)** | {portfolio_map['FIXED_INCOME']['current_pct']}% | {portfolio_map['FIXED_INCOME']['target_pct']}% | **{portfolio_map['FIXED_INCOME']['infusion']:,} 元** | {portfolio_map['FIXED_INCOME']['status']} |
+
+---
+
+## 💎 四、 RISK-REWARD ODDS MATRIX / 跨资产风险收益比量化实证概率矩阵
+*(注：回撤支撑由 Forward MDD 概率跨月度算子完全激活，为未来 20 交易日历史前向滑动窗口最大潜在回撤中位数；期望空间由历史条件概率分层回溯计算)*
+
+| 资产名称 (代码) | 20日期望空间 | 20日远期回撤 | 胜率/赔率比 | 5日动态涨跌 | MA20乖离 | 滚动历史年化波动 | 有效历史样本量 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| 国际期铜 (`{TICKERS['COPPER']}`) | +{odds_matrix['COPPER']['upside']}% | -{odds_matrix['COPPER']['downside']}% | {odds_matrix['COPPER']['odds']} | {changes_5d['COPPER']}% | {bias_ma20['COPPER']}% | {copper_vol_252d}% | {odds_matrix['COPPER']['samples']} 个同质状态样本 |
+| 科技硬件 (`{TICKERS['TECH']}`) | +{odds_matrix['TECH']['upside']}% | -{odds_matrix['TECH']['downside']}% | {odds_matrix['TECH']['odds']} | {changes_5d['TECH']}% | {bias_ma20['TECH']}% | {vols_252d['TECH']}% | {odds_matrix['TECH']['samples']} 个同质状态样本 |
+| 黄金避险 (`{TICKERS['GOLD']}`) | +{odds_matrix['GOLD']['upside']}% | -{odds_matrix['GOLD']['downside']}% | {odds_matrix['GOLD']['odds']} | {changes_5d['GOLD']}% | {bias_ma20['GOLD']}% | {vols_252d['GOLD']}% | {odds_matrix['GOLD']['samples']} 个同质状态样本 |
+
+---
+
+## 🎯 五、 DEEPSEEK STRATEGIC BRAIN INSIGHTS / 智脑宏观归因内参
+
 {ai_insights}
-█========================================================================================================================█
+
+---
 """
         print(report_content)
         
         historical_record = {
             "audit_date": self.beijing_time.strftime('%Y-%m-%d'), "dxy_price": prices["DXY"], "us10y_pct": prices["US10Y"], 
-            "current_portfolio_vol": current_portfolio_vol, "target_portfolio_vol": target_portfolio_vol, "execution_seconds": 0.0
+            "current_portfolio_vol": current_full_vol, "target_portfolio_vol": target_full_vol, "execution_seconds": 0.0
         }
         self.metrics["execution_time_seconds"] = round(time.time() - start_time, 2)
         historical_record["execution_seconds"] = self.metrics["execution_time_seconds"]
         self.log_to_csv(historical_record)
         
-        logger.info(f"Pipeline finished seamlessly. Metrics: [Fetches={self.metrics['successful_fetches']}, Fallbacks={self.metrics['fallbacks_triggered']}, BoundaryViolations={self.metrics['boundary_violations']}, TimeSpent={self.metrics['execution_time_seconds']}s] | Notification pushed successfully.")
-
+        # 🛠️ 高优先级缺陷修复二：引入真实的变量来捕获飞书重试最终状态，杜绝不管成败盲目打印 success 的乐观误报
+        push_status = "skipped (no webhook configured)"
         if NOTIFICATION["WEBHOOK_URL"]:
+            push_success = False
             for attempt in range(NOTIFICATION["MAX_RETRIES"]):
                 try:
                     feishu_payload = {"msg_type": "text", "content": {"text": report_content}}
                     res = requests.post(NOTIFICATION["WEBHOOK_URL"], json=feishu_payload, timeout=NOTIFICATION["TIMEOUT"])
-                    if res.status_code == 200: break
+                    if res.status_code == 200:
+                        push_success = True
+                        break
                 except Exception as e: 
                     logger.warning(f"Notification server block on attempt {attempt+1}: {e}")
                     time.sleep(NOTIFICATION["RETRY_DELAY"])
+            push_status = "success" if push_success else "failed after max retries"
+            if not push_success:
+                logger.error(f"Critical: Telemetry notification failed to push after {NOTIFICATION['MAX_RETRIES']} attempts.")
+
+        logger.info(f"Pipeline finished seamlessly. Metrics: [Fetches={self.metrics['successful_fetches']}, Fallbacks={self.metrics['fallbacks_triggered']}, BoundaryViolations={self.metrics['boundary_violations']}, TimeSpent={self.metrics['execution_time_seconds']}s] | Notification: {push_status}")
 
 if __name__ == "__main__":
-    agent = PortfolioDisciplineEngineV26_5_4()
+    # 刚性闭环：主入口执行类名与版本号完美自洽收拢至 V26_5_5 LTS 终极量产版
+    agent = PortfolioDisciplineEngineV26_5_5()
     agent.run_pipeline()
