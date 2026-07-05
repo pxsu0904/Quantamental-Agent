@@ -297,11 +297,10 @@ class AdvancedQuantamentalAgentV14:
   -> 拦截合理性边界熔断违规数: {self.metrics['boundary_violations']}
 """)
 
-      # 8. 满血配置化网络高可用推送层 (完美对齐飞书特定嵌套标准协议格式)
+     # 8. 满血配置化网络高可用推送层 (加入飞书隐藏错误深度诊断)
         if NOTIFICATION["WEBHOOK_URL"]:
             for attempt in range(NOTIFICATION["MAX_RETRIES"]):
                 try:
-                    # 🛠️ 核心修正：封装飞书死锁的 msg_type 与 content 套娃外壳
                     feishu_payload = {
                         "msg_type": "text",
                         "content": {
@@ -313,6 +312,10 @@ class AdvancedQuantamentalAgentV14:
                         json=feishu_payload, 
                         timeout=NOTIFICATION["TIMEOUT"]
                     )
+                    
+                    # 🛠️ 终极诊断线：强行把飞书网关吐出的真实拒绝原因打印到 GitHub 日志里
+                    logger.info(f"🚨 【飞书网关真实返回体】: {res.text}")
+                    
                     if res.status_code == 200:
                         logger.info("Signal briefing successfully delivered to live Feishu Desk.")
                         break
