@@ -330,7 +330,7 @@ class PortfolioDisciplineEngineV26_5_8:
 
         macro_radar = {"DXY_MA20_CROSS": "UNKNOWN", "US10Y_MA20_CROSS": "UNKNOWN"}
         if data_matrix["DXY"] is not None and data_matrix["US10Y"] is not None:
-            macro_radar["DXY_MA20_CROSS"] = "BELOW_MA20 (流动性边际释放)" if prices["DXY"] < data_matrix["DXY']['Close'].rolling(20).mean().iloc[-1] else "ABOVE_MA20 (流动性收紧)"
+            macro_radar["DXY_MA20_CROSS"] = "BELOW_MA20 (流动性边际释放)" if prices["DXY"] < data_matrix["DXY"]['Close'].rolling(20).mean().iloc[-1] else "ABOVE_MA20 (流动性收紧)"
             macro_radar["US10Y_MA20_CROSS"] = "BELOW_MA20 (重力压制减弱)" if prices["US10Y"] < data_matrix["US10Y"]['Close'].rolling(20).mean().iloc[-1] else "ABOVE_MA20 (重力压制增强)"
 
         # 风险资产内部子空间口径加权融合
@@ -570,6 +570,6 @@ class PortfolioDisciplineEngineV26_5_8:
         logger.info(f"Pipeline finished seamlessly. Metrics: [Fetches={self.metrics['successful_fetches']}, Fallbacks={self.metrics['fallbacks_triggered']}, BoundaryViolations={self.metrics['boundary_violations']}, TimeSpent={self.metrics['execution_time_seconds']}s] | Notification: {push_status}")
 
 if __name__ == "__main__":
-    # 刚性死锁修复：严格调用当前文件定义的 V26_5_8 类，彻底绝育由于拼写不一致引发的 NameError
+    # 🛠️ 终极死锁爆破：将执行端初始化彻底修正为与其定义的类名绝对一致的 V26_5_8，绝不含糊！
     agent = PortfolioDisciplineEngineV26_5_8()
     agent.run_pipeline()
