@@ -1,3 +1,8 @@
+import os
+# 强制单线程运行，防止云端虚拟机 CPU 多线程并行时触发段错误 (Segmentation Fault)
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
 import socket
 # 刚性设置全局底层 network 超时锁为 15 秒，强制封杀 yfinance 在云端挂死
 socket.setdefaulttimeout(15)
