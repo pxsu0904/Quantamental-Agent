@@ -570,6 +570,6 @@ class PortfolioDisciplineEngineV26_5_8:
         logger.info(f"Pipeline finished seamlessly. Metrics: [Fetches={self.metrics['successful_fetches']}, Fallbacks={self.metrics['fallbacks_triggered']}, BoundaryViolations={self.metrics['boundary_violations']}, TimeSpent={self.metrics['execution_time_seconds']}s] | Notification: {push_status}")
 
 if __name__ == "__main__":
-    # 🛠️ 终极死锁爆破：将执行端初始化彻底修正为与其定义的类名绝对一致的 V26_5_8，绝不含糊！
+    # 🛠️ 绝对锁死：主入口执行端初始化全权重对齐 V26_5_8，手写输入，严禁机械化复制粘贴
     agent = PortfolioDisciplineEngineV26_5_8()
     agent.run_pipeline()
