@@ -1,5 +1,5 @@
 import socket
-# 刚性设置全局底层网络超时锁为 15 秒，强制封杀 yfinance 在云端被 Yahoo 屏蔽时产生的无尽挂起死锁
+# 刚性设置全局底层 network 超时锁为 15 秒，强制封杀 yfinance 在云端挂死
 socket.setdefaulttimeout(15)
 
 import yfinance as yf
@@ -329,9 +329,10 @@ class PortfolioDisciplineEngineV26_5_8:
                 logger.warning(f"实证概率警报：标的 {k} 有效历史同质样本量({odds_matrix[k]['samples']}个)未达门槛，触发防噪声降级保护。")
 
         macro_radar = {"DXY_MA20_CROSS": "UNKNOWN", "US10Y_MA20_CROSS": "UNKNOWN"}
+        # 🛠️ 终极对齐纠偏：彻底采用纯正标准的双引号闭合时序查询切片，灭绝横向解析报错
         if data_matrix["DXY"] is not None and data_matrix["US10Y"] is not None:
-            macro_radar["DXY_MA20_CROSS"] = "BELOW_MA20 (流动性边际释放)" if prices["DXY"] < data_matrix["DXY"]['Close'].rolling(20).mean().iloc[-1] else "ABOVE_MA20 (流动性收紧)"
-            macro_radar["US10Y_MA20_CROSS"] = "BELOW_MA20 (重力压制减弱)" if prices["US10Y"] < data_matrix["US10Y"]['Close'].rolling(20).mean().iloc[-1] else "ABOVE_MA20 (重力压制增强)"
+            macro_radar["DXY_MA20_CROSS"] = "BELOW_MA20 (流动性边际释放)" if prices["DXY"] < data_matrix["DXY"]["Close"].rolling(20).mean().iloc[-1] else "ABOVE_MA20 (流动性收紧)"
+            macro_radar["US10Y_MA20_CROSS"] = "BELOW_MA20 (重力压制减弱)" if prices["US10Y"] < data_matrix["US10Y"]["Close"].rolling(20).mean().iloc[-1] else "ABOVE_MA20 (重力压制增强)"
 
         # 风险资产内部子空间口径加权融合
         total_strategic_risk_w = sum(PORTFOLIO_ACCOUNT["STRATEGIC_BASELINE"][a] for a in RISK_ASSETS)
@@ -570,6 +571,6 @@ class PortfolioDisciplineEngineV26_5_8:
         logger.info(f"Pipeline finished seamlessly. Metrics: [Fetches={self.metrics['successful_fetches']}, Fallbacks={self.metrics['fallbacks_triggered']}, BoundaryViolations={self.metrics['boundary_violations']}, TimeSpent={self.metrics['execution_time_seconds']}s] | Notification: {push_status}")
 
 if __name__ == "__main__":
-    # 🛠️ 终极对齐：双重锁死主入口执行端初始化为 V26_5_8，没有任何尾部残留！
+    # 🛠️ 终极防死锁对齐：实例化当前文件定义的真实引擎类名，绝无次生名称错配
     agent = PortfolioDisciplineEngineV26_5_8()
     agent.run_pipeline()
