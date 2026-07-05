@@ -22,20 +22,17 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: 3. 一键配置华尔街量化工具箱环境依赖
+     - name: 3. 一键配置华尔街量化工具箱环境依赖
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          python -m pip install yfinance pandas numpy scipy requests
 
       - name: 4. 全权点火启动多资产量化基本面核心引擎
         env:
-          # 🔐 核心数据通信与认知大脑环境变量注入网关
           ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
-          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
-          LLM_MODEL: ${{ secrets.LLM_MODEL }}
-          ENABLE_LLM: "true"
-        run: python main.py
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          python main.py
 
       - name: 5. 跨时序自我提交 (Git Auto-Commit) —— 将今日数据同步返回仓库账本
         run: |
