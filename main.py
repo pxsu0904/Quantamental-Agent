@@ -297,13 +297,20 @@ class AdvancedQuantamentalAgentV14:
   -> 拦截合理性边界熔断违规数: {self.metrics['boundary_violations']}
 """)
 
-        # 8. 满血配置化网络高可用推送层
+      # 8. 满血配置化网络高可用推送层 (完美对齐飞书特定嵌套标准协议格式)
         if NOTIFICATION["WEBHOOK_URL"]:
             for attempt in range(NOTIFICATION["MAX_RETRIES"]):
                 try:
+                    # 🛠️ 核心修正：封装飞书死锁的 msg_type 与 content 套娃外壳
+                    feishu_payload = {
+                        "msg_type": "text",
+                        "content": {
+                            "text": report_content
+                        }
+                    }
                     res = requests.post(
                         NOTIFICATION["WEBHOOK_URL"], 
-                        json={"text": report_content}, 
+                        json=feishu_payload, 
                         timeout=NOTIFICATION["TIMEOUT"]
                     )
                     if res.status_code == 200:
@@ -311,9 +318,3 @@ class AdvancedQuantamentalAgentV14:
                         break
                 except Exception as e:
                     logger.warning(f"Failed to deliver notification on attempt {attempt+1}: {e}")
-                    
-        logger.info("===== PIPELINE CRITICAL RUN COMPLETED WITHOUT ANOMALIES =====")
-
-if __name__ == "__main__":
-    agent = AdvancedQuantamentalAgentV14()
-    agent.run_pipeline()
