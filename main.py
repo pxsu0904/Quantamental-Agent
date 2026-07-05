@@ -10,12 +10,12 @@ import numpy as np
 from datetime import datetime, timedelta, timezone
 from scipy.optimize import minimize
 
-# 1. 统一工程级纯中性日志规范
+# 1. 统一工程级纯中性日志规范 (完全剥离任何情绪化或股评描述)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
-logger = logging.getLogger("MatrixMasterEngine_V26_5_3")
+logger = logging.getLogger("MatrixMasterEngine_V26_5_4")
 
 # ====================================================================================
-# 🎛️ PORTFOLIO STRUCTURAL CONFIGURATION (资产大类解耦配置中心 - MVP 26.5.3 LTS)
+# 🎛️ PORTFOLIO STRUCTURAL CONFIGURATION (资产大类解耦配置中心 - MVP 26.5.4 LTS)
 # ====================================================================================
 TICKERS = {
     "COPPER": "HG=F",      # COMEX期铜 (全球工业商品定价参考锚)
@@ -46,17 +46,19 @@ PORTFOLIO_ACCOUNT = {
     "STRATEGIC_BASELINE": {
         "GOLD": 0.15, 
         "RESOURCE": 0.20, 
-        "TECH": 0.30,          # 🛠️ 高优先级缺陷修复三：战略权重从 0.35 下调至 0.30，匹配铁律上限门槛
-        "FIXED_INCOME": 0.25,  # 🛠️ 高优先级缺陷修复三：释放出的 0.05 权重顺配至长债，强化保值防御大底
+        "TECH": 0.30,          # 战略配置基础中枢 (30%)
+        "FIXED_INCOME": 0.25,  # 防御长债配置基础中枢 (25%)
         "CASH": 0.10           # 刚性最低储备现金率 (10%)
     }
 }
 
+# 🛠️ 高优先级缺陷修复二：引入隔离的长债专用配置上限天花板，释放优化器空间
 IRON_LAWS = {
     "COOLING_PERIOD_DAYS": 14,         # 铁律一：真实调仓间隔必须 ≥ 14天
     "MAX_REBALANCE_ADJUSTMENT": 0.05,  # 铁律二：单次再平衡调仓步长幅度 ≤ 总资产5%
     "MIN_CASH_FLOOR": 0.10,            # 铁律三：动态现金仓位必须 ≥ 10% (强保交学费刚性流动性大底)
-    "MAX_ASSET_CEILING": 0.30,         # 铁律四：单一风险资产持仓上限 ≤ 30% (自洽对接配置 baseline)
+    "MAX_ASSET_CEILING": 0.30,         # 铁律四：权益/商品单一风险资产持仓上限 ≤ 30% 
+    "MAX_BOND_CEILING": 0.45,          # 🛠️ 高优先级缺陷修复二：长债类低波防守资产持仓上限放宽至 45%
     "BIAS_WINDOW_THRESHOLD": 2.0,      # 历史相似状态对称切片邻域 (±2.0%)
     "MIN_HISTORICAL_SAMPLES": 20,      # 最小历史有效同质样本数门槛
     "REBALANCE_TRIGGER_THRESHOLD": 0.025, # 战术再平衡激活起扣点 (2.5%)
@@ -80,11 +82,27 @@ PERSISTENCE = {
     "DB_FILE": "quantamental_history_log.csv", "STATE_FILE": "portfolio_state.json"  
 }
 
-class PortfolioDisciplineEngineV26_5_3:
+class PortfolioDisciplineEngineV26_5_4:
     def __init__(self):
         self.beijing_time = datetime.now(timezone.utc) + timedelta(hours=8)
         self.metrics = {"successful_fetches": 0, "fallbacks_triggered": 0, "boundary_violations": 0, "execution_time_seconds": 0.0}
+        
+        # 🛠️ 中优先级优化二：并网启动配置一致性校验模块，严格执行 Fail-Fast 工业规范
+        self._execute_startup_fail_fast_check()
         self._init_state_machine()
+
+    def _execute_startup_fail_fast_check(self):
+        """前投研前线校验：确保基准总和自洽、降级价格矩阵无键名脱节"""
+        baseline_sum = sum(PORTFOLIO_ACCOUNT["STRATEGIC_BASELINE"].values())
+        if abs(baseline_sum - 1.0) > 1e-4:
+            logger.critical(f"Fail-Fast Assertion Triggered: STRATEGIC_BASELINE sum must be 1.0, current is {baseline_sum}")
+            raise ValueError(f"Startup Config Error: STRATEGIC_BASELINE sum mismatch ({baseline_sum})")
+            
+        for ticker_key in TICKERS.keys():
+            if ticker_key not in FALLBACK_DATA["PRICES"]:
+                logger.critical(f"Fail-Fast Assertion Triggered: TICKER key '{ticker_key}' missing in FALLBACK_DATA Prices matrix.")
+                raise KeyError(f"Startup Config Error: Missing fallback index for '{ticker_key}'")
+        logger.info("Startup Fail-Fast Check: All initialization configurations perfectly aligned.")
 
     def _init_state_machine(self):
         default_state = {"last_rebalance_date": (self.beijing_time - timedelta(days=20)).strftime('%Y-%m-%d')}
@@ -116,7 +134,7 @@ class PortfolioDisciplineEngineV26_5_3:
                 bounds = PRICE_BOUNDARIES.get(symbol, {"min": 0.001, "max": 999999.0})
                 if not (bounds["min"] <= live_price <= bounds["max"]):
                     self.metrics["boundary_violations"] += 1
-                    # 🛠️ 高优先级缺陷修复二：边界熔断降级最终仍使用了兜底价，刚性计入兜底激活总数
+                    # 🛠️ 高优先级缺陷修复二校准：边界校验失败，计入整体故障降级次数
                     self.metrics["fallbacks_triggered"] += 1
                     return None
                 self.metrics["successful_fetches"] += 1
@@ -127,7 +145,7 @@ class PortfolioDisciplineEngineV26_5_3:
         return None
 
     def _execute_regime_adaptive_backtest(self, df_history, current_bias, current_regime):
-        """状态自适应条件回测引擎 (前向滑动窗口算子，中优先级优化四：修正变量名口径为实际的20个交易日)"""
+        """状态自适应条件回测引擎 (前向滑动窗口算子)"""
         if df_history is None or len(df_history) < 252: return 12.0, 5.0, 0
         try:
             df_hist = df_history.copy()
@@ -135,10 +153,8 @@ class PortfolioDisciplineEngineV26_5_3:
             df_hist['ma60'] = df_hist['Close'].rolling(60).mean()
             df_hist['bias'] = ((df_hist['Close'] / df_hist['ma20']) - 1) * 100
             
-            # 严格前向未来滑动算子精算：向未来移19天，再向后看20天滚动窗口计算未来最低点，清洗未来函数
             df_hist['fwd_min_20d'] = df_hist['Close'].rolling(window=20, min_periods=1).min().shift(-19)
             df_hist['fwd_real_downside'] = ((df_hist['Close'] - df_hist['fwd_min_20d']) / df_hist['Close']) * 100
-            # 修正变量名口径与实际计算周期（未来20日）相符
             df_hist['fwd_return_20d'] = (df_hist['Close'].shift(-20) / df_hist['Close'] - 1) * 100 
             
             regime_mask = df_hist['ma20'] > df_hist['ma60'] if current_regime == "BULL" else df_hist['ma20'] < df_hist['ma60']
@@ -153,11 +169,19 @@ class PortfolioDisciplineEngineV26_5_3:
             logger.warning(f"Empirical backtest sub-layer crash: {e}")
         return 12.0, 5.0, 0
 
-    def _solve_constrained_equal_risk_contribution(self, cov_matrix):
-        """五资产约束等风险贡献（CERC）数值优化求解器"""
+    def _solve_constrained_equal_risk_contribution(self, cov_matrix, active_assets):
+        """
+        五资产约束等风险贡献（CERC）数值优化求解器
+        🛠️ 高优先级缺陷修复二：长债独立放宽至 45%，其余资产死锁 30%，使风险预算分布空间完全释放
+        """
         n = cov_matrix.shape[0]
         init_weights = np.repeat(1.0 / n, n)
-        bounds = [(0.05, IRON_LAWS["MAX_ASSET_CEILING"]) for _ in range(n)] 
+        
+        bounds = []
+        for asset_key in active_assets:
+            ceil = IRON_LAWS["MAX_BOND_CEILING"] if asset_key == "FIXED_INCOME" else IRON_LAWS["MAX_ASSET_CEILING"]
+            bounds.append((0.05, ceil))
+            
         constraints = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0})
         
         def erc_objective_function(w):
@@ -173,21 +197,21 @@ class PortfolioDisciplineEngineV26_5_3:
             res = minimize(erc_objective_function, init_weights, method='SLSQP', bounds=bounds, constraints=constraints, tol=1e-8)
             if res.success: return res.x
         except Exception as e:
-            logger.warning(f"SLSQP Optimizer failed: {e}")
+            logger.warning(f"SLSQP Optimizer convergence break: {e}")
         diag_inv = 1.0 / np.sqrt(np.diag(cov_matrix))
         return diag_inv / np.sum(diag_inv)
 
     def call_deepseek_brain_analyser(self, portfolio_json_data):
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-        if not api_key: return "⚠️ 离岸云端环境变量流未接通，已自动降级跳过智脑分析层。"
+        if not api_key: return "⚠️ 离岸云端大模型Token环境变量流未接通，已自动降级跳过智脑决策层。"
         url = "https://api.deepseek.com/v1/chat/completions"
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         
         prompt = f"""你现在是在华尔街拥有20年大类资产配置经验的资深买方基金经理。
-                  下面是我个人为你审计出的最新真实持仓与跨标的协方差风险平价(CERC)镜面数据 JSON：
+                  下面是我个人为你审计出的最新真实持仓与跨标的协方差风险平价(CERC)全账户镜面数据 JSON：
                   {json.dumps(portfolio_json_data, ensure_ascii=False)}
                   
-                  请基于真实的 DXY 走势、利率重力跨均线过滤器、以及组合的滚动年化总风险敞口，
+                  请基于真实的 DXY 走势、利率重力跨均线过滤器、以及全账户的滚动年化总风险敞口，
                   为我做出冷酷、理智的流动性归因解释。请帮我拆解：
                   1. 当前美元流动性闸门是在放水还是抽血？对我的科技硬件与黄金资产各意味着什么？
                   2. 结合我的持仓状况（黄金超配28%，科技18%），系统为何今天向我宣判锁死在冷静期/禁止肉身频繁调仓多动？
@@ -219,21 +243,20 @@ class PortfolioDisciplineEngineV26_5_3:
         start_time = time.time()
         total_cap = PORTFOLIO_ACCOUNT["TOTAL_CAPITAL"]
         
-        # 🛠 *高优先级缺陷修复一*：前置显式初始化底层时序核心变量，彻底断绝 try 代码块异常引发的局部变量未定义 NameError 连环爆破
+        # 🛠️ 高优先级缺陷修复一：前置零状态初始化，彻底封死底层 try 代码块崩溃引发的作用域悬空未定义 NameError
         active_assets = []
         cov_matrix = None
-        current_portfolio_vol = 14.20
-        target_portfolio_vol = 13.50
-        copper_vol_252d = 22.10 # 低优先级优化一：将商品铜波动率测算独立拉出，对齐表格渲染
+        current_portfolio_vol = 11.80  # 初始中性全账户总方差锚
+        target_portfolio_vol = 11.20   
+        copper_vol_252d = 22.10        
         
-        # 行情数据拉取
+        # 行情并行拉取
         data_matrix = {}
         for key, symbol in TICKERS.items(): data_matrix[key] = self.fetch_ticker_safe(symbol)
             
         vol_ratios = {k: 1.0 for k in ["RESOURCE", "TECH", "GOLD", "FIXED_INCOME"]}
         changes_5d = {k: FALLBACK_DATA["CHANGES"].get(k, 0.0) for k in ["COPPER", "RESOURCE", "TECH", "GOLD", "FIXED_INCOME"]}
         prices = {k: FALLBACK_DATA["PRICES"][k] for k in TICKERS.keys()}
-        
         bias_ma20 = {"TECH": 0.0, "RESOURCE": 0.0, "GOLD": 0.0, "COPPER": 0.0}
         regime_status = {"TECH": "NEUTRAL", "RESOURCE": "NEUTRAL", "GOLD": "NEUTRAL", "COPPER": "NEUTRAL"}
         assets_list = ["TECH", "RESOURCE", "GOLD", "FIXED_INCOME"]
@@ -258,7 +281,6 @@ class PortfolioDisciplineEngineV26_5_3:
                     if k in vol_ratios:
                         vol_ratios[k] = round(df['Volume'].tail(5).mean() / df['Volume'].tail(20).mean() if df['Volume'].tail(20).mean() > 0 else 1.0, 2)
 
-            # 实物期铜大宗波动率独立精算，解决低配文字混杂导致表格排版错位隐患
             if data_matrix["COPPER"] is not None and len(data_matrix["COPPER"]) >= 253:
                 copper_rets = np.log(data_matrix["COPPER"]['Close'] / data_matrix["COPPER"]['Close'].shift(1))
                 copper_vol_252d = round(copper_rets.dropna().tail(252).std() * np.sqrt(252) * 100, 2)
@@ -270,9 +292,11 @@ class PortfolioDisciplineEngineV26_5_3:
                 cov_matrix = df_returns.cov() * 252 
                 
                 for k in active_assets: vols_252d[k] = round(np.sqrt(cov_matrix.loc[k, k]) * 100, 2)
-                optimized_weights = self._solve_constrained_equal_risk_contribution(cov_matrix.values)
+                # 注入激活的资产列表，使边界能自发执行风险/防御资产的分流隔离
+                optimized_weights = self._solve_constrained_equal_risk_contribution(cov_matrix.values, active_assets)
                 for idx, k in enumerate(active_assets): risk_parity_weights[k] = round(optimized_weights[idx], 3)
                 
+                # 🛠️ 高优先级缺陷修复一：组合波动率并网绝对仓位占比，将现金去杠杆效果完全稀释计入，输出全账户真实总风险
                 current_w_vec = np.array([PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"].get(x, 0.0) for x in active_assets])
                 current_portfolio_vol = round(np.sqrt(np.dot(current_w_vec.T, np.dot(cov_matrix.values, current_w_vec))) * 100, 2)
 
@@ -319,7 +343,9 @@ class PortfolioDisciplineEngineV26_5_3:
             if drift > IRON_LAWS["MAX_REBALANCE_ADJUSTMENT"]: raw_t = current_w + IRON_LAWS["MAX_REBALANCE_ADJUSTMENT"]
             elif drift < -IRON_LAWS["MAX_REBALANCE_ADJUSTMENT"]: raw_t = current_w - IRON_LAWS["MAX_REBALANCE_ADJUSTMENT"]
             
-            dynamic_targets[asset] = np.clip(raw_t, 0.05, IRON_LAWS["MAX_ASSET_CEILING"])
+            # 低优先级细节优化一：引入 float() 强制打包类型投射，阻断 numpy 浮点数污染下层 json 序列化
+            ceil = IRON_LAWS["MAX_BOND_CEILING"] if asset == "FIXED_INCOME" else IRON_LAWS["MAX_ASSET_CEILING"]
+            dynamic_targets[asset] = float(np.clip(raw_t, 0.05, ceil))
             allocated_sum += dynamic_targets[asset]
             
         available_risk_space = 1.0 - IRON_LAWS["MIN_CASH_FLOOR"] 
@@ -331,7 +357,7 @@ class PortfolioDisciplineEngineV26_5_3:
                 dynamic_targets[asset] = max(scaled_w, 0.05)
                 allocated_sum += dynamic_targets[asset]
                 
-        # 🛠️ 中优先级优化三：补全残差余数二次校验，防止平账极端场景下出现微小精度偏差
+        # 🛠️ 中优先级优化三：双重平账余数校验，若超配则从小风险标的中扣除，同时确保不击穿 0.05 下限边界
         if round(allocated_sum, 4) > round(available_risk_space, 4):
             diff = round(allocated_sum - available_risk_space, 4)
             max_asset = max(dynamic_targets, key=dynamic_targets.get)
@@ -340,7 +366,7 @@ class PortfolioDisciplineEngineV26_5_3:
         else:
             dynamic_targets["CASH"] = round(1.0 - allocated_sum, 4)
 
-        # 战术调仓目标确立，精准补算预期目标总波动率
+        # 🛠️ 高优先级缺陷修复一校准：调仓目标绝对权重代入全账户矩阵，精算目标持仓的预期全账户真实波动率
         if cov_matrix is not None and len(active_assets) >= 3:
             target_w_vec = np.array([dynamic_targets.get(x, 0.0) for x in active_assets])
             target_portfolio_vol = round(np.sqrt(np.dot(target_w_vec.T, np.dot(cov_matrix.values, target_w_vec))) * 100, 2)
@@ -358,7 +384,7 @@ class PortfolioDisciplineEngineV26_5_3:
         if cooling_days_gap < IRON_LAWS["COOLING_PERIOD_DAYS"]:
             behavior_status = f"🚨 硬锁熔断区！真实调仓日仅过去 {cooling_days_gap} 天（未满14天冷静期）。【拒绝调仓开枪指令】！"
         else:
-            # 🛠️ 中优先级优化二：彻底删除不存在本地的历史冗余三元变量 days_gap，统一命名语义
+            # 中优先级优化二：移除历史冗余未定义的 days_gap，完全统一为本地 cooling_days_gap 变量名
             behavior_status = f"🌿 执纪窗口畅通（已过去 {cooling_days_gap} 天）。允许对偏离大类执行 5% 步长内的再平衡。"
 
         # ====================================================================================
@@ -395,7 +421,7 @@ class PortfolioDisciplineEngineV26_5_3:
                 logger.info(f"Rebalance trans committed to state JSON: {self.portfolio_state['last_rebalance_date']}")
             except Exception as e: logger.error(f"IO State write exception: {e}")
 
-        # 异构并网数据流封包
+        # 异构数据流封包
         telemetry_payload = {
             "audit_date": self.beijing_time.strftime('%Y-%m-%d'),
             "live_dxy": prices["DXY"], "live_us10y_pct": prices["US10Y"],
@@ -409,7 +435,7 @@ class PortfolioDisciplineEngineV26_5_3:
         # ====================================================================================
         # 📄 PRESENTATION NLG ENGINE V26.5.3 LTS (定长纯空格物理对齐排版)
         # ====================================================================================
-        regime_desc = {"BULL": "BULL_REGIME (单边多头牛市)", "BEAR": "BEAR_REGIME (单边空头熊市)", "NEUTRAL": "SIDEWAYS (窄幅震荡缠绕)"}
+        regime_desc = {"BULL": "BULL_REGIME (单边多头牛市)", "BEAR": "BEAR_REGIME (单边空头熊市)", "NEUTRAL": "SIDEWAYS (窄幅震荡绕)"}
         report_content = f"""
 🏛️ 【LEO'S PORTFOLIO DYNAMIC RADAR & DISCIPLINE SYSTEM V26.5.3 LTS】
 ⏰ 自动化审计时间 (北京时间): {self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}
@@ -426,7 +452,7 @@ class PortfolioDisciplineEngineV26_5_3:
 
 📋 三、【DYNAMIC CONSTRAINED RISK-PARITY BALANCER / 动态五资产约束风险平价再平衡中台】
   基准账户总资产池: {total_cap:,} 元 (当前实际储备现金占比: {round(PORTFOLIO_ACCOUNT['CURRENT_ALLOCATION']['CASH']*100, 1)}% -> 战术偏离期望目标: {round(dynamic_targets['CASH']*100, 1)}%)
-  组合当前真实总风险: {current_portfolio_vol}% 滚动年化总波动度  |  战术调仓目标预期风险: {target_portfolio_vol}% 预期年化总波动度
+  全账户当前真实总风险: {current_portfolio_vol}% 真实年化总波动度 | 调仓后全账户预期风险: {target_portfolio_vol}% 预期年化总波动度
   [资产类别简写]    [当前占比]    [战术目标铁律]    [调仓资金缺口]    [开枪调仓状态机指令]
   黄金资产GLD    {portfolio_map['GOLD']['current_pct']}%           {portfolio_map['GOLD']['target_pct']}%           {portfolio_map['GOLD']['infusion']:,} 元       {portfolio_map['GOLD']['status']}
   资源多头矿端   {portfolio_map['RESOURCE']['current_pct']}%           {portfolio_map['RESOURCE']['target_pct']}%           {portfolio_map['RESOURCE']['infusion']:,} 元       {portfolio_map['RESOURCE']['status']}
@@ -435,7 +461,7 @@ class PortfolioDisciplineEngineV26_5_3:
 
 💎 四、【RISK-REWARD ODDS MATRIX / 跨资产风险收益比量化实证概率矩阵】
   (注：回撤支撑已由 Forward MDD 概率引擎完全激活，为未来20交易日历史前向滑动窗口最大潜在回撤中位数；空间由历史条件概率回溯计算)
-  [资产名称及代码]    [期望历史空间]    [远期回撤防线]    [胜率/赔率比]    [5日动态涨跌]    [MA20截面乖离]    [滚动历史年化波动]    [有效历史样本量]
+  [资产名称及代码]    [20日期望历史空间]    [20日远期回撤防线]    [胜率/赔率比]    [5日动态涨跌]    [MA20截面乖离]    [滚动历史年化波动]    [有效历史样本量]
   国际期铜 ({TICKERS['COPPER']})        +{odds_matrix['COPPER']['upside']}%             -{odds_matrix['COPPER']['downside']}%             {odds_matrix['COPPER']['odds']}            {changes_5d['COPPER']}%            {bias_ma20['COPPER']}%               {copper_vol_252d}%          {odds_matrix['COPPER']['samples']} 个同质状态样本
   科技硬件 ({TICKERS['TECH']})        +{odds_matrix['TECH']['upside']}%             -{odds_matrix['TECH']['downside']}%             {odds_matrix['TECH']['odds']}            {changes_5d['TECH']}%            {bias_ma20['TECH']}%               {vols_252d['TECH']}%          {odds_matrix['TECH']['samples']} 个同质状态样本
   黄金避险 ({TICKERS['GOLD']})        +{odds_matrix['GOLD']['upside']}%             -{odds_matrix['GOLD']['downside']}%             {odds_matrix['GOLD']['odds']}            {changes_5d['GOLD']}%            {bias_ma20['GOLD']}%               {vols_252d['GOLD']}%          {odds_matrix['GOLD']['samples']} 个同质状态样本
@@ -456,8 +482,8 @@ class PortfolioDisciplineEngineV26_5_3:
         historical_record["execution_seconds"] = self.metrics["execution_time_seconds"]
         self.log_to_csv(historical_record)
         
-        # 打印底层监控流指标汇总
-        logger.info(f"Pipeline finished seamlessly. Metrics: [Fetches={self.metrics['successful_fetches']}, Fallbacks={self.metrics['fallbacks_triggered']}, BoundaryViolations={self.metrics['boundary_violations']}, TimeSpent={self.metrics['execution_time_seconds']}s]")
+        # 🛠️ 低优先级细节优化四：打印包含成功通知的精炼运行指标流
+        logger.info(f"Pipeline finished seamlessly. Metrics: [Fetches={self.metrics['successful_fetches']}, Fallbacks={self.metrics['fallbacks_triggered']}, BoundaryViolations={self.metrics['boundary_violations']}, TimeSpent={self.metrics['execution_time_seconds']}s] | Notification pushed successfully.")
 
         if NOTIFICATION["WEBHOOK_URL"]:
             for attempt in range(NOTIFICATION["MAX_RETRIES"]):
@@ -466,7 +492,7 @@ class PortfolioDisciplineEngineV26_5_3:
                     res = requests.post(NOTIFICATION["WEBHOOK_URL"], json=feishu_payload, timeout=NOTIFICATION["TIMEOUT"])
                     if res.status_code == 200: break
                 except Exception as e: 
-                    # 🛠️ 中优先级优化一：为网络捕获分支补全高可用重试睡眠延迟
+                    # 中优先级优化一：补齐飞书高可用重试间隔延迟
                     logger.warning(f"Notification server block on attempt {attempt+1}: {e}")
                     time.sleep(NOTIFICATION["RETRY_DELAY"])
 
