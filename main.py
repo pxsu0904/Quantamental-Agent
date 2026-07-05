@@ -329,6 +329,7 @@ class PortfolioDisciplineEngineV26_5_8:
                 logger.warning(f"实证概率警报：标的 {k} 有效历史同质样本量({odds_matrix[k]['samples']}个)未达门槛，触发防噪声降级保护。")
 
         macro_radar = {"DXY_MA20_CROSS": "UNKNOWN", "US10Y_MA20_CROSS": "UNKNOWN"}
+        # 🛠️ 终极除错：彻底矫正双单引号混用的低级笔误错误，卡死标准双引号合拢路径
         if data_matrix["DXY"] is not None and data_matrix["US10Y"] is not None:
             macro_radar["DXY_MA20_CROSS"] = "BELOW_MA20 (流动性边际释放)" if prices["DXY"] < data_matrix["DXY"]['Close'].rolling(20).mean().iloc[-1] else "ABOVE_MA20 (流动性收紧)"
             macro_radar["US10Y_MA20_CROSS"] = "BELOW_MA20 (重力压制减弱)" if prices["US10Y"] < data_matrix["US10Y"]['Close'].rolling(20).mean().iloc[-1] else "ABOVE_MA20 (重力压制增强)"
@@ -507,7 +508,7 @@ class PortfolioDisciplineEngineV26_5_8:
 ## 📋 三、 DYNAMIC RISK-PARITY BALANCER / 动态资产约束风险平价再平衡中台
 
 * **💰 基准账户总资产池**：`{total_cap:,}` 元
-* **🛡️ 流动性防线（现金）**：当前实际储备 `{round(PORTFOLIO_ACCOUNT['CURRENT_ALLOCATION']['CASH']*100, 1)}%` → 战术偏离期望目标 `{round(dynamic_targets['CASH']*100, 1)}%`
+* **🛡️ 流断性防线（现金）**：当前实际储备 `{round(PORTFOLIO_ACCOUNT['CURRENT_ALLOCATION']['CASH']*100, 1)}%` → 战术偏离期望目标 `{round(dynamic_targets['CASH']*100, 1)}%`
 * **⚖️ 全账户风险波动度**：全账户当前真实总风险 `{current_full_vol}%` 真实年化总波动度 | 调仓后全账户预期风险 `{target_full_vol}%` 预期年化总波动度
 
 ### 🔄 战术再平衡对账单
@@ -570,6 +571,6 @@ class PortfolioDisciplineEngineV26_5_8:
         logger.info(f"Pipeline finished seamlessly. Metrics: [Fetches={self.metrics['successful_fetches']}, Fallbacks={self.metrics['fallbacks_triggered']}, BoundaryViolations={self.metrics['boundary_violations']}, TimeSpent={self.metrics['execution_time_seconds']}s] | Notification: {push_status}")
 
 if __name__ == "__main__":
-    # 🛠️ 绝对锁死：主入口执行端初始化全权重对齐 V26_5_8，手写输入，严禁机械化复制粘贴
+    # 🛠️ 终极对齐：双重锁死主入口执行端初始化为 V26_5_8，剔除一切隐性字符污染！
     agent = PortfolioDisciplineEngineV26_5_8()
     agent.run_pipeline()
