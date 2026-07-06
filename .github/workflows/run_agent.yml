@@ -1,27 +1,44 @@
-name: Quantamental Agent
+name: Global Copper Quantamental Agent Auto-Scheduler
 
 on:
   schedule:
-    - cron: '45 0 * * 1-5'
-  workflow_dispatch:
+    - cron: '45 0 * * 1-5' # 🌅 早上 08:45 (北京时间) 早盘定调前瞻
+    - cron: '30 6 * * 1-5' # ⚔️ 下午 14:30 (北京时间) 尾盘锁定击
+  workflow_dispatch:       # 手动点火开关
 
 jobs:
-  build:
+  execute-intelligence-pipeline:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write      # 赋予写权限，允许自我提交时回写落库文件
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python
+      - name: 1. 克隆并检出最新代码仓库
+        uses: actions/checkout@v3
+
+      - name: 2. 部署云端纯净 Python 3.10 环境
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-      - name: Install Dependencies
+
+      - name: 3. 一键配置华尔街量化工具箱环境依赖
         run: |
-          pip install --upgrade pip
-          pip install pandas numpy scipy requests yfinance
-      - name: Run Engine
+          python -m pip install --upgrade pip
+          # 锁定稳定版本，拒绝自动升级导致的二进制接口崩塌与内存段错误(Segmentation Fault)
+          python -m pip install pandas==2.2.0 numpy==1.26.4 yfinance==0.2.35 scipy requests
+
+      - name: 4. 全权点火启动多资产量化基本面核心引擎
         env:
           ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
-        run: python main.py
+        run: |
+          python main.py
+
+      - name: 5. 跨时序自我提交 (Git Auto-Commit) —— 将今日数据同步返回仓库账本
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add quantamental_history_log.csv portfolio_state.json || true
+          git commit -m "chrono: archive quantamental telemetry logs [skip ci]" || true
+          git push || true
