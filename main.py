@@ -13,7 +13,7 @@ if hasattr(sys.stdout, "reconfigure"): sys.stdout.reconfigure(encoding="utf-8")
 
 socket.setdefaulttimeout(15)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
-logger = logging.getLogger("Engine_V26_6_3")
+logger = logging.getLogger("Engine_V26_6_5")
 
 RISK_ASSETS = ["TECH", "RESOURCE", "GOLD", "FIXED_INCOME"]
 TICKERS = {"COPPER": "HG=F", "RESOURCE": "COPX", "TECH": "XLK", "GOLD": "GLD", "FIXED_INCOME": "TLT", "DXY": "DX-Y.NYB", "US10Y": "^TNX", "FX": "USDCNY=X"}
@@ -22,7 +22,7 @@ FALLBACK_DATA = {
     "CHANGES": {"COPPER": 0.5, "RESOURCE": 1.22, "TECH": -1.39, "GOLD": -0.45, "FIXED_INCOME": 0.1}
 }
 PORTFOLIO_ACCOUNT = {
-    "TOTAL_CAPITAL": 24581.50, # 精准镜面对齐中信实盘总金额
+    "TOTAL_CAPITAL": 24581.50, # 精准镜面对齐你当前中信实盘总金额
     "CURRENT_ALLOCATION": {"GOLD": 0.035, "RESOURCE": 0.631, "TECH": 0.188, "FIXED_INCOME": 0.0, "CASH": 0.146},
     "STRATEGIC_BASELINE": {"GOLD": 0.15, "RESOURCE": 0.20, "TECH": 0.30, "FIXED_INCOME": 0.25, "CASH": 0.10}
 }
@@ -41,7 +41,7 @@ PRICE_BOUNDARIES = {
 NOTIFICATION = {"WEBHOOK_URL": os.environ.get("ALERT_WEBHOOK_URL", ""), "MAX_RETRIES": 3, "RETRY_DELAY": 1, "TIMEOUT": 5}
 PERSISTENCE = {"DB_FILE": "quantamental_history_log.csv", "STATE_FILE": "portfolio_state.json"}
 
-class PortfolioDisciplineEngineV26_6_3:
+class PortfolioDisciplineEngineV26_6_5:
     def __init__(self):
         self.beijing_time = datetime.now(timezone.utc) + timedelta(hours=8)
         self.portfolio_state = {"last_rebalance_date": (self.beijing_time - timedelta(days=20)).strftime('%Y-%m-%d')}
@@ -97,7 +97,6 @@ class PortfolioDisciplineEngineV26_6_3:
         if not api_key: return "⚠️ 离岸大模型Token未配通，智脑归因平滑降级。"
         url = base_url.rstrip('/') + ('/chat/completions' if not base_url.endswith('/chat/completions') else '')
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        # 🛠️ 终极绝杀：彻底将这里的自引用变量由错误的 portfolio_json_data 刚性修复为当前作用域内的 payload
         prompt = f"""你现在是在华尔街拥有20年资产配置经验的买方基金经理。下面是实盘账户数据JSON：{json.dumps(payload, ensure_ascii=False)}. 
                   请基于真实DXY、美债10Y利率走势做出冷酷理智的流动性归因解释：
                   1. 美元流动性是在‘放水’还是‘抽血’？对科技与黄金各意味着什么？
@@ -113,7 +112,7 @@ class PortfolioDisciplineEngineV26_6_3:
         r_desc = {"BULL": "BULL_REGIME (单边多头牛市)", "BEAR": "BEAR_REGIME (单边空头熊市)", "NEUTRAL": "SIDEWAYS (窄幅震荡缠绕)"}
         fmt_s = lambda k: f"{odds_matrix[k]['samples']} 个样本" if odds_matrix[k]["samples"] >= IRON_LAWS["MIN_HISTORICAL_SAMPLES"] else "⚠️ 样本量不足 (降级参考)"
         
-        return f"""# 🏛️ LEO'S PORTFOLIO SYSTEM V26.6.3 LTS
+        return f"""# 🏛️ LEO'S PORTFOLIO SYSTEM V26.6.5 LTS
 > **⏰ 自动化审计时间**: `{self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}`
 ---
 ## 📊 一、 宏观流动性观察站
@@ -123,7 +122,7 @@ class PortfolioDisciplineEngineV26_6_3:
 * 状态判词: {behavior_status}
 ---
 ## 📋 三、 动态资产再平衡中台
-* 账户总资产: `{PORTFOLIO_ACCOUNT['TOTAL_CAPITAL']:,}` 元 | 现金期望: `{round(dynamic_targets['CASH']*100, 1)}%`
+* 账户总资产: `{PORTFOLIO_ACCOUNT['TOTAL_CAPITAL']:,}` 元 | **🛡️ 流动性防线（现金）**：期望目标 `{round(dynamic_targets['CASH']*100, 1)}%`
 * 全账户当前总风险: 11.8% | 预期总风险: 11.2%
 
 | 资产类别简写 | 当前占比 | 战术目标 | 调仓资金缺口 | 开枪指令 |
@@ -188,6 +187,7 @@ class PortfolioDisciplineEngineV26_6_3:
             curr_w = PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"][a]
             drift = raw_t - curr_w
             if drift > IRON_LAWS["MAX_REBALANCE_ADJUSTMENT"]: raw_t = curr_w + IRON_LAWS["MAX_REBALANCE_ADJUSTMENT"]
+            # 🛠️ 绝对修复：将这里残留的错误变量名彻底由 current_w 订正为当前作用域内的 curr_w！
             elif drift < -IRON_LAWS["MAX_REBALANCE_ADJUSTMENT"]: raw_t = curr_w - IRON_LAWS["MAX_REBALANCE_ADJUSTMENT"]
             ceil = IRON_LAWS["MAX_BOND_CEILING"] if a == "FIXED_INCOME" else IRON_LAWS["MAX_ASSET_CEILING"]
             dynamic_targets[a] = float(np.clip(raw_t, IRON_LAWS["MIN_ASSET_FLOOR"], ceil))
@@ -246,5 +246,6 @@ class PortfolioDisciplineEngineV26_6_3:
             except: pass
 
 if __name__ == "__main__":
-    agent = PortfolioDisciplineEngineV26_6_3()
+    # 🛠️ 强行锁死对齐：当前文件定义的真实执行类名，绝无任何次生名称拼写错位
+    agent = PortfolioDisciplineEngineV26_6_5()
     agent.run_pipeline()
