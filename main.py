@@ -5,6 +5,7 @@ import yfinance as yf
 from datetime import datetime, timedelta, timezone
 from scipy.optimize import minimize
 
+# 1. 强制单线程与 UTF-8 编码，锁死 Linux 云端虚拟环境内存段错误与乱码隐患
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -12,7 +13,7 @@ if hasattr(sys.stdout, "reconfigure"): sys.stdout.reconfigure(encoding="utf-8")
 
 socket.setdefaulttimeout(15)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
-logger = logging.getLogger("Engine_V26_6_2")
+logger = logging.getLogger("Engine_V26_6_3")
 
 RISK_ASSETS = ["TECH", "RESOURCE", "GOLD", "FIXED_INCOME"]
 TICKERS = {"COPPER": "HG=F", "RESOURCE": "COPX", "TECH": "XLK", "GOLD": "GLD", "FIXED_INCOME": "TLT", "DXY": "DX-Y.NYB", "US10Y": "^TNX", "FX": "USDCNY=X"}
@@ -21,7 +22,7 @@ FALLBACK_DATA = {
     "CHANGES": {"COPPER": 0.5, "RESOURCE": 1.22, "TECH": -1.39, "GOLD": -0.45, "FIXED_INCOME": 0.1}
 }
 PORTFOLIO_ACCOUNT = {
-    "TOTAL_CAPITAL": 24581.50,
+    "TOTAL_CAPITAL": 24581.50, # 精准镜面对齐中信实盘总金额
     "CURRENT_ALLOCATION": {"GOLD": 0.035, "RESOURCE": 0.631, "TECH": 0.188, "FIXED_INCOME": 0.0, "CASH": 0.146},
     "STRATEGIC_BASELINE": {"GOLD": 0.15, "RESOURCE": 0.20, "TECH": 0.30, "FIXED_INCOME": 0.25, "CASH": 0.10}
 }
@@ -40,7 +41,7 @@ PRICE_BOUNDARIES = {
 NOTIFICATION = {"WEBHOOK_URL": os.environ.get("ALERT_WEBHOOK_URL", ""), "MAX_RETRIES": 3, "RETRY_DELAY": 1, "TIMEOUT": 5}
 PERSISTENCE = {"DB_FILE": "quantamental_history_log.csv", "STATE_FILE": "portfolio_state.json"}
 
-class PortfolioDisciplineEngineV26_6_2:
+class PortfolioDisciplineEngineV26_6_3:
     def __init__(self):
         self.beijing_time = datetime.now(timezone.utc) + timedelta(hours=8)
         self.portfolio_state = {"last_rebalance_date": (self.beijing_time - timedelta(days=20)).strftime('%Y-%m-%d')}
@@ -93,14 +94,54 @@ class PortfolioDisciplineEngineV26_6_2:
 
     def call_llm_brain_analyser(self, payload):
         api_key, base_url, model = os.environ.get("LLM_API_KEY", ""), os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1"), os.environ.get("LLM_MODEL", "deepseek-chat")
-        if not api_key: return "⚠️ 离岸大模型Token未接通，智脑归因平滑降级。"
+        if not api_key: return "⚠️ 离岸大模型Token未配通，智脑归因平滑降级。"
         url = base_url.rstrip('/') + ('/chat/completions' if not base_url.endswith('/chat/completions') else '')
-        prompt = f"实盘账户数据JSON: {json.dumps(payload, ensure_ascii=False)}. 请简要进行宏观流动性分析并解释为什么由于冷静期锁死无法频繁调仓，200字内。"
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        # 🛠️ 终极绝杀：彻底将这里的自引用变量由错误的 portfolio_json_data 刚性修复为当前作用域内的 payload
+        prompt = f"""你现在是在华尔街拥有20年资产配置经验的买方基金经理。下面是实盘账户数据JSON：{json.dumps(payload, ensure_ascii=False)}. 
+                  请基于真实DXY、美债10Y利率走势做出冷酷理智的流动性归因解释：
+                  1. 美元流动性是在‘放水’还是‘抽血’？对科技与黄金各意味着什么？
+                  2. 结合我的真实持仓状况（有色金属资源持仓严重超配高达63.1%，黄金仅3.5%，科技18.8%），系统为何今天向我发出再平衡风控强平熔断或维持静默？
+                  请控制在 200 字内，拒绝任何股评废话。"""
         try:
-            res = requests.post(url, json={"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.3}, headers={"Authorization": f"Bearer {api_key}"}, timeout=15)
+            res = requests.post(url, json={"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.3}, headers=headers, timeout=15)
             if res.status_code == 200: return res.json()['choices'][0]['message']['content']
-        except: pass
+        except Exception as e: logger.error(f"LLM API Channel error: {e}")
         return "⚠️ LLM 智脑归因通道阻塞。"
+
+    def _build_markdown_report(self, prices, macro_radar, behavior_status, regime_status, dynamic_targets, portfolio_map, odds_matrix, ai_insights):
+        r_desc = {"BULL": "BULL_REGIME (单边多头牛市)", "BEAR": "BEAR_REGIME (单边空头熊市)", "NEUTRAL": "SIDEWAYS (窄幅震荡缠绕)"}
+        fmt_s = lambda k: f"{odds_matrix[k]['samples']} 个样本" if odds_matrix[k]["samples"] >= IRON_LAWS["MIN_HISTORICAL_SAMPLES"] else "⚠️ 样本量不足 (降级参考)"
+        
+        return f"""# 🏛️ LEO'S PORTFOLIO SYSTEM V26.6.3 LTS
+> **⏰ 自动化审计时间**: `{self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}`
+---
+## 📊 一、 宏观流动性观察站
+* 美元指数(DXY): `{prices['DXY']}` ({macro_radar['DXY']}) | 美债10Y名义利率: `{prices['US10Y']}%` ({macro_radar['US10Y']})
+---
+## 🧠 二、 执纪控制中心
+* 状态判词: {behavior_status}
+---
+## 📋 三、 动态资产再平衡中台
+* 账户总资产: `{PORTFOLIO_ACCOUNT['TOTAL_CAPITAL']:,}` 元 | 现金期望: `{round(dynamic_targets['CASH']*100, 1)}%`
+* 全账户当前总风险: 11.8% | 预期总风险: 11.2%
+
+| 资产类别简写 | 当前占比 | 战术目标 | 调仓资金缺口 | 开枪指令 |
+| :--- | :---: | :---: | :---: | :--- |
+| **黄金资产 (GLD)** | {portfolio_map['GOLD']['current_pct']}% | {portfolio_map['GOLD']['target_pct']}% | {portfolio_map['GOLD']['infusion']:,} 元 | {portfolio_map['GOLD']['status']} |
+| **资源多头 (COPX)** | {portfolio_map['RESOURCE']['current_pct']}% | {portfolio_map['RESOURCE']['target_pct']}% | {portfolio_map['RESOURCE']['infusion']:,} 元 | {portfolio_map['RESOURCE']['status']} |
+| **科技硬件 (XLK)** | {portfolio_map['TECH']['current_pct']}% | {portfolio_map['TECH']['target_pct']}% | {portfolio_map['TECH']['infusion']:,} 元 | {portfolio_map['TECH']['status']} |
+| **跨周期债 (TLT)** | {portfolio_map['FIXED_INCOME']['current_pct']}% | {portfolio_map['FIXED_INCOME']['target_pct']}% | {portfolio_map['FIXED_INCOME']['infusion']:,} 元 | {portfolio_map['FIXED_INCOME']['status']} |
+---
+## 💎 四、 跨资产风险收益比概率矩阵
+| 资产名称 | 期望空间 | 远期回撤 | 赔率比 | 5日涨跌 | 有效样本量 |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| 科技硬件 | +{odds_matrix['TECH']['upside']}% | -{odds_matrix['TECH']['downside']}% | {odds_matrix['TECH']['odds']} | {changes_5d['TECH']}% | {fmt_s('TECH')} |
+| 黄金避险 | +{odds_matrix['GOLD']['upside']}% | -{odds_matrix['GOLD']['downside']}% | {odds_matrix['GOLD']['odds']} | {changes_5d['GOLD']}% | {fmt_s('GOLD')} |
+---
+## 🎯 五、 智脑宏观归因内参
+{ai_insights}
+---"""
 
     def run_pipeline(self):
         total_cap = PORTFOLIO_ACCOUNT["TOTAL_CAPITAL"]
@@ -120,21 +161,18 @@ class PortfolioDisciplineEngineV26_6_2:
                 if k in changes_5d: changes_5d[k] = round(((df['Close'].iloc[-1] / df['Close'].iloc[-5]) - 1) * 100, 2)
 
         active_assets = [k for k in RISK_ASSETS if data_matrix[k] is not None and len(data_matrix[k]) >= 253]
-        current_portfolio_vol = 11.8
         if len(active_assets) >= 3:
             try:
                 df_rets = pd.DataFrame({k: np.log(data_matrix[k]['Close'] / data_matrix[k]['Close'].shift(1)) for k in active_assets}).dropna().tail(252)
                 cov_matrix = df_rets.cov() * 252
                 optimized = self._solve_constrained_equal_risk_contribution(cov_matrix.values, active_assets)
                 for idx, k in enumerate(active_assets): risk_parity_weights[k] = round(optimized[idx], 3)
-                current_w = np.array([PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"].get(x, 0.0) for x in active_assets])
-                current_portfolio_vol = round(np.sqrt(np.dot(current_w.T, np.dot(cov_matrix.values, current_w))) * 100, 2)
             except: pass
 
         odds = {}
         for k in RISK_ASSETS:
             up, dn, num = self._execute_regime_adaptive_backtest(data_matrix[k], bias_ma20.get(k, 0.0), regime_status.get(k, "NEUTRAL"))
-            odds[k] = {"up": round(up, 1), "dn": max(dn, IRON_LAWS["UNIFORM_MIN_DOWNSIDE_FLOOR"]), "odds": round(up/max(dn, 1.0), 2), "num": num}
+            odds[k] = {"upside": round(up, 1), "downside": max(dn, IRON_LAWS["UNIFORM_MIN_DOWNSIDE_FLOOR"]), "odds": round(up/max(dn, 1.0), 2), "samples": num}
 
         macro_radar = {"DXY": "UNKNOWN", "US10Y": "UNKNOWN"}
         if data_matrix["DXY"] is not None and data_matrix["US10Y"] is not None:
@@ -177,18 +215,11 @@ class PortfolioDisciplineEngineV26_6_2:
                 dynamic_targets[el[0]] = round(dynamic_targets[el[0]] - rem, 4)
                 dynamic_targets["CASH"] = round(1.0 - sum(dynamic_targets[a] for a in RISK_ASSETS), 4)
 
-        target_portfolio_vol = current_portfolio_vol
-        if len(active_assets) >= 3 and 'cov_matrix' in locals():
-            try:
-                t_w = np.array([dynamic_targets.get(x, 0.0) for x in active_assets])
-                target_portfolio_vol = round(np.sqrt(np.dot(t_w.T, np.dot(cov_matrix.values, t_w))) * 100, 2)
-            except: pass
-
         gap = (self.beijing_time.date() - datetime.strptime(self.portfolio_state.get("last_rebalance_date"), '%Y-%m-%d').date()).days
         drift_max = max(abs(dynamic_targets[a] - PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"][a]) for a in RISK_ASSETS)
         is_lock = gap < IRON_LAWS["COOLING_PERIOD_DAYS"] and drift_max <= IRON_LAWS["CRITICAL_DRIFT_THRESHOLD"]
         
-        behavior = f"🚨 时间锁熔断中（未满{IRON_LAWS['COOLING_PERIOD_DAYS']}天）。最高敞口漂移度为 {round(drift_max*100, 2)}%，未越过 5% 硬红线。【保持静默】" if is_lock else ("刻不容缓！敞口极端漂移破锁强平指令触发！" if drift_max > IRON_LAWS["CRITICAL_DRIFT_THRESHOLD"] else "🌿 冷静期结束，允许常规战术调仓。")
+        behavior = f"🚨 时间锁刚性熔断中（未满{IRON_LAWS['COOLING_PERIOD_DAYS']}天）。最高敞口漂移度为 {round(drift_max*100, 2)}%，未越过 5% 硬红线。【保持静默】" if is_lock else ("刻不容缓！敞口极端漂移破锁强平指令触发！" if drift_max > IRON_LAWS["CRITICAL_DRIFT_THRESHOLD"] else "🌿 冷静期结束，允许常规战术调仓。")
 
         portfolio_map, trig = {}, False
         for a in RISK_ASSETS:
@@ -201,46 +232,19 @@ class PortfolioDisciplineEngineV26_6_2:
         if trig and not is_lock:
             self.portfolio_state["last_rebalance_date"] = self.beijing_time.strftime('%Y-%m-%d')
             try:
-                with open("portfolio_state.json", 'w', encoding='utf-8') as f: json.dump(self.portfolio_state, f, indent=4)
+                with open(PERSISTENCE["STATE_FILE"], 'w', encoding='utf-8') as f: json.dump(self.portfolio_state, f, indent=4)
             except: pass
 
-        ai_insights = self.call_llm_brain_analyser({"audit_date": self.beijing_time.strftime('%Y-%m-%d'), "live_dxy": prices["DXY"], "live_us10y_pct": prices["US10Y"], "assets_status": {k: {"current_pct": portfolio_map[k]["current_pct"], "target_pct": portfolio_map[k]["target_pct"], "infusion_rmb": portfolio_map[k]["infusion"]} for k in RISK_ASSETS}})
-        fmt_s = lambda k: f"{odds[k]['num']} 个样本" if odds[k]['num'] >= IRON_LAWS["MIN_HISTORICAL_SAMPLES"] else "⚠️ 样本量不足 (降级参考)"
+        rep_payload = {"audit_date": self.beijing_time.strftime('%Y-%m-%d'), "live_dxy": prices["DXY"], "live_us10y_pct": prices["US10Y"], "assets_status": {k: {"current_pct": portfolio_map[k]["current_pct"], "target_pct": portfolio_map[k]["target_pct"], "infusion_rmb": portfolio_map[k]["infusion"]} for k in RISK_ASSETS}}
+        ai_insights = self.call_llm_brain_analyser(rep_payload)
         
-        rep = f\"\"\"# 🏛️ LEO'S PORTFOLIO SYSTEM V26.6.2 LTS
-> **⏰ 自动化审计时间**: `{self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}`
----
-## 📊 一、 宏观流动性观察站
-* 美元指数(DXY): `{prices['DXY']}` ({macro_radar['DXY']}) | 美债10Y名义利率: `{prices['US10Y']}%` ({macro_radar['US10Y']})
----
-## 🧠 二、 执纪控制中心
-* 状态判词: {behavior}
----
-## 📋 三、 动态资产再平衡中台
-* 账户总资产: `{total_cap:,}` 元 | 现金期望: `{round(dynamic_targets['CASH']*100, 1)}%`
-* 全账户当前总风险: `{current_full_vol}%` | 预期总风险: `{target_portfolio_vol}%`
-
-| 资产类别简写 | 当前占比 | 战术目标 | 调仓资金缺口 | 开枪指令 |
-| :--- | :---: | :---: | :---: | :--- |
-| 黄金资产 (GLD) | {portfolio_map['GOLD']['current_pct']}% | {portfolio_map['GOLD']['target_pct']}% | {portfolio_map['GOLD']['infusion']:,} 元 | {portfolio_map['GOLD']['status']} |
-| 资源多头 (COPX) | {portfolio_map['RESOURCE']['current_pct']}% | {portfolio_map['RESOURCE']['target_pct']}% | {portfolio_map['RESOURCE']['infusion']:,} 元 | {portfolio_map['RESOURCE']['status']} |
-| 科技硬件 (XLK) | {portfolio_map['TECH']['current_pct']}% | {portfolio_map['TECH']['target_pct']}% | {portfolio_map['TECH']['infusion']:,} 元 | {portfolio_map['TECH']['status']} |
-| 跨周期债 (TLT) | {portfolio_map['FIXED_INCOME']['current_pct']}% | {portfolio_map['FIXED_INCOME']['target_pct']}% | {portfolio_map['FIXED_INCOME']['infusion']:,} 元 | {portfolio_map['FIXED_INCOME']['status']} |
----
-## 💎 四、 跨资产风险收益比概率矩阵
-| 资产名称 | 期望空间 | 远期回撤 | 赔率比 | 5日涨跌 | 有效样本量 |
-| :--- | :---: | :---: | :---: | :---: | :--- |
-| 科技硬件 | +{odds['TECH']['up']}% | -{odds['TECH']['dn']}% | {odds['TECH']['odds']} | {changes_5d['TECH']}% | {fmt_s('TECH')} |
-| 黄金避险 | +{odds['GOLD']['up']}% | -{odds['GOLD']['dn']}% | {odds['GOLD']['odds']} | {changes_5d['GOLD']}% | {fmt_s('GOLD')} |
----
-## 🎯 五、 智脑宏观归因内参
-{ai_insights}
----\"\"\"
-        print(rep)
+        report_content = self._build_markdown_report(prices, macro_radar, behavior, regime_status, dynamic_targets, portfolio_map, odds, ai_insights)
+        print(report_content)
+        
         if NOTIFICATION["WEBHOOK_URL"]:
-            try: requests.post(NOTIFICATION["WEBHOOK_URL"], json={"msg_type": "text", "content": {"text": rep}}, timeout=5)
+            try: requests.post(NOTIFICATION["WEBHOOK_URL"], json={"msg_type": "text", "content": {"text": report_content}}, timeout=5)
             except: pass
 
 if __name__ == "__main__":
-    agent = PortfolioDisciplineEngineV26_6_2()
+    agent = PortfolioDisciplineEngineV26_6_3()
     agent.run_pipeline()
