@@ -13,7 +13,7 @@ if hasattr(sys.stdout, "reconfigure"): sys.stdout.reconfigure(encoding="utf-8")
 
 socket.setdefaulttimeout(15)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
-logger = logging.getLogger("Engine_V26_6_7")
+logger = logging.getLogger("Engine_V26_6_8")
 
 RISK_ASSETS = ["TECH", "RESOURCE", "GOLD", "FIXED_INCOME"]
 TICKERS = {"COPPER": "HG=F", "RESOURCE": "COPX", "TECH": "XLK", "GOLD": "GLD", "FIXED_INCOME": "TLT", "DXY": "DX-Y.NYB", "US10Y": "^TNX", "FX": "USDCNY=X"}
@@ -23,16 +23,16 @@ FALLBACK_DATA = {
 }
 
 # ====================================================================================
-# 🎛️ PORTFOLIO CORE POSITION CENTER (三平台联合大航空母舰战斗群 - 优化对齐生产区)
+# 🎛️ PORTFOLIO CORE POSITION CENTER (三平台联合大航空母舰战斗群 - 资产镜面死锁区)
 # ====================================================================================
 PORTFOLIO_ACCOUNT = {
-    "TOTAL_CAPITAL": 38506.30,  # 🎯 精准锁死：盛达清仓后三平台联合最新总资本
+    "TOTAL_CAPITAL": 38506.30,  # 🎯 盛达清仓后，三平台合并核算的真实最新总资本
     "CURRENT_ALLOCATION": {
-        "GOLD": 0.224,          # 联合避险黄金实际绝对占比 (含场内ETF、积存金与平台三)
-        "RESOURCE": 0.266,      # 中信证券有色矿端最新安全占比 (已顺畅缩回天花板内)
-        "TECH": 0.301,          # 联合全球科技算力互联网真实占比 
-        "FIXED_INCOME": 0.000,  # 跨周期长债当前空仓
-        "CASH": 0.209           # 斩仓盛达后，主账户证券可用储备现金占比暴增至 20.9%
+        "GOLD": 0.224,          # 联合避险黄金实际绝对占比
+        "RESOURCE": 0.266,      # 有色多头矿端安全缩回后的占比
+        "TECH": 0.301,          # 联合全球科技真实实际占比
+        "FIXED_INCOME": 0.000,  # 长债当前空仓
+        "CASH": 0.209           # 可用现金储备占比 20.9%
     },
     "STRATEGIC_BASELINE": {
         "GOLD": 0.15, "RESOURCE": 0.20, "TECH": 0.30, "FIXED_INCOME": 0.25, "CASH": 0.10
@@ -54,7 +54,7 @@ PRICE_BOUNDARIES = {
 NOTIFICATION = {"WEBHOOK_URL": os.environ.get("ALERT_WEBHOOK_URL", ""), "MAX_RETRIES": 3, "RETRY_DELAY": 1, "TIMEOUT": 5}
 PERSISTENCE = {"DB_FILE": "quantamental_history_log.csv", "STATE_FILE": "portfolio_state.json"}
 
-class PortfolioDisciplineEngineV26_6_7:
+class PortfolioDisciplineEngineV26_6_8:
     def __init__(self):
         self.beijing_time = datetime.now(timezone.utc) + timedelta(hours=8)
         self.portfolio_state = {"last_rebalance_date": (self.beijing_time - timedelta(days=20)).strftime('%Y-%m-%d')}
@@ -106,16 +106,16 @@ class PortfolioDisciplineEngineV26_6_7:
         except: pass
         return init_w
 
-   def call_llm_brain_analyser(self, payload, behavior_status):
+    # 🛠️ 刚性同步对齐：接头入口完美闭环接收 behavior_status
+    def call_llm_brain_analyser(self, payload, behavior_status):
         api_key, base_url, model = os.environ.get("LLM_API_KEY", ""), os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1"), os.environ.get("LLM_MODEL", "deepseek-chat")
         if not api_key: return "⚠️ 离岸大模型Token未配通，智脑归因平滑降级。"
         url = base_url.rstrip('/') + ('/chat/completions' if not base_url.endswith('/chat/completions') else '')
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-# 🟢 修改为动态判定，彻底封杀 AI 自我打架的逻辑漏洞：
         prompt = f"""你现在是在华尔街拥有20年资产配置经验的资深买方风控官。下面是合并了场外理财通及积存金后的实盘数据JSON：{json.dumps(payload, ensure_ascii=False)}. 
                   请基于真实DXY、美债10Y利率走势做出理智的流动性归因解释：
                   1. 美元流动性是在‘放水’还是‘抽血’？对科技与黄金各意味着什么？
-                  2. 结合我的真实合并持仓状况，系统当前的判词状态是：【{behavior_status}】。请一句话从小组组合风控角度做出极其冷酷的专家归因。
+                  2. 结合我的真实合并持仓状况，系统当前下达的硬判词状态是：【{behavior_status}】。请基于此状态从风险控制层面做出冷酷简练的买方专家点评。
                   请控制在 200 字内，拒绝任何股评废话。"""
         try:
             res = requests.post(url, json={"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.3}, headers=headers, timeout=15)
@@ -125,7 +125,7 @@ class PortfolioDisciplineEngineV26_6_7:
 
     def _build_markdown_report(self, prices, macro_radar, behavior_status, regime_status, dynamic_targets, portfolio_map, odds_matrix, changes_5d, ai_insights):
         fmt_s = lambda k: f"{odds_matrix[k]['samples']} 个样本" if odds_matrix[k]["samples"] >= IRON_LAWS["MIN_HISTORICAL_SAMPLES"] else "⚠️ 样本量不足 (降级参考)"
-        return f"""# 🏛️ LEO'S PORTFOLIO SYSTEM V26.6.7 LTS
+        return f"""# 🏛️ LEO'S PORTFOLIO SYSTEM V26.6.8 LTS
 > **⏰ 自动化审计时间**: `{self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}`
 ---
 ## 📊 一、 宏观流动性观察站
@@ -211,7 +211,6 @@ class PortfolioDisciplineEngineV26_6_7:
             for a in RISK_ASSETS: dynamic_targets[a] = max(round(dynamic_targets[a]*scale, 4), IRON_LAWS["MIN_ASSET_FLOOR"])
             allocated_sum = sum(dynamic_targets[a] for a in RISK_ASSETS)
         
-        # 🛠️ 刚性优化：重构浮点数高阶平账余数分配，杜绝边界越界
         if round(allocated_sum, 4) > round(space, 4):
             diff = round(allocated_sum - space, 4)
             for a in sorted(dynamic_targets.keys(), key=lambda x: dynamic_targets[x], reverse=True):
@@ -233,7 +232,7 @@ class PortfolioDisciplineEngineV26_6_7:
         drift_max = max(abs(dynamic_targets[a] - PORTFOLIO_ACCOUNT["CURRENT_ALLOCATION"][a]) for a in RISK_ASSETS)
         is_lock = gap < IRON_LAWS["COOLING_PERIOD_DAYS"] and drift_max <= IRON_LAWS["CRITICAL_DRIFT_THRESHOLD"]
         
-        behavior = f"🌿 危机全面解除。当前最大敞口偏离度仅为 {round(drift_max*100, 2)}%，资产全部缩回安全中枢以内。【主账户8000+现金就地锁死，全线休兵静默】" if is_lock else ("刻不容缓！资产发生过载偏离，强制触发【战术强平开枪指令】！" if drift_max > IRON_LAWS["CRITICAL_DRIFT_THRESHOLD"] else "🌿 账户风险归位，常规调仓窗口解锁。")
+        behavior = f"🌿 危机全面解除。当前最大敞口偏离度仅为 {round(drift_max*100, 2)}%，资产全部缩回安全中枢内。【主账户8000+现金就地锁死，全线休兵静默】" if is_lock else ("刻不容缓！资产发生过载偏离，强制触发【战术强平开枪指令】！" if drift_max > IRON_LAWS["CRITICAL_DRIFT_THRESHOLD"] else "🌿 账户风险归位，常规调仓窗口解锁。")
 
         portfolio_map, trig = {}, False
         for a in RISK_ASSETS:
@@ -250,15 +249,20 @@ class PortfolioDisciplineEngineV26_6_7:
             except: pass
 
         rep_payload = {"audit_date": self.beijing_time.strftime('%Y-%m-%d'), "live_dxy": prices["DXY"], "live_us10y_pct": prices["US10Y"], "assets_status": {k: {"current_pct": portfolio_map[k]["current_pct"], "target_pct": portfolio_map[k]["target_pct"], "infusion_rmb": portfolio_map[k]["infusion"]} for k in RISK_ASSETS}}
+        
+        # 🛠️ 绝对修复：将当前作用域内的真实判词 behavior 刚性传导至大模型调用端，实现完美对齐！
         ai_insights = self.call_llm_brain_analyser(rep_payload, behavior)
         
         report_content = self._build_markdown_report(prices, macro_radar, behavior, regime_status, dynamic_targets, portfolio_map, odds, changes_5d, ai_insights)
         print(report_content)
         
         if NOTIFICATION["WEBHOOK_URL"]:
-            try: requests.post(NOTIFICATION["WEBHOOK_URL"], json={"msg_type": "text", "content": {"text": report_content}}, timeout=5)
-            except: pass
+            try:
+                res = requests.post(NOTIFICATION["WEBHOOK_URL"], json={"msg_type": "text", "content": {"text": report_content}}, timeout=5)
+                logger.info(f"📢 飞书网络通道响应状态码: {res.status_code} | 返回内容: {res.text}")
+            except Exception as e:
+                logger.error(f"❌ 飞书网络发送链路断裂: {e}")
 
 if __name__ == "__main__":
-    agent = PortfolioDisciplineEngineV26_6_7()
+    agent = PortfolioDisciplineEngineV26_6_8()
     agent.run_pipeline()
