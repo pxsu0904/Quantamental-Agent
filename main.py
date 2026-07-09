@@ -13,7 +13,7 @@ if hasattr(sys.stdout, "reconfigure"): sys.stdout.reconfigure(encoding="utf-8")
 
 socket.setdefaulttimeout(15)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
-logger = logging.getLogger("Engine_V26_6_8")
+logger = logging.getLogger("Engine_V26_6_9")
 
 RISK_ASSETS = ["TECH", "RESOURCE", "GOLD", "FIXED_INCOME"]
 TICKERS = {"COPPER": "HG=F", "RESOURCE": "COPX", "TECH": "XLK", "GOLD": "GLD", "FIXED_INCOME": "TLT", "DXY": "DX-Y.NYB", "US10Y": "^TNX", "FX": "USDCNY=X"}
@@ -54,7 +54,7 @@ PRICE_BOUNDARIES = {
 NOTIFICATION = {"WEBHOOK_URL": os.environ.get("ALERT_WEBHOOK_URL", ""), "MAX_RETRIES": 3, "RETRY_DELAY": 1, "TIMEOUT": 5}
 PERSISTENCE = {"DB_FILE": "quantamental_history_log.csv", "STATE_FILE": "portfolio_state.json"}
 
-class PortfolioDisciplineEngineV26_6_8:
+class PortfolioDisciplineEngineV26_6_9:
     def __init__(self):
         self.beijing_time = datetime.now(timezone.utc) + timedelta(hours=8)
         self.portfolio_state = {"last_rebalance_date": (self.beijing_time - timedelta(days=20)).strftime('%Y-%m-%d')}
@@ -106,17 +106,17 @@ class PortfolioDisciplineEngineV26_6_8:
         except: pass
         return init_w
 
-    # 🛠️ 刚性同步对齐：接头入口完美闭环接收 behavior_status
+    # 🛠️ 深度优化：完全重构大模型提示词，逼迫其输出具体人民币金额与像素级动作，封杀模糊百分比
     def call_llm_brain_analyser(self, payload, behavior_status):
         api_key, base_url, model = os.environ.get("LLM_API_KEY", ""), os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1"), os.environ.get("LLM_MODEL", "deepseek-chat")
         if not api_key: return "⚠️ 离岸大模型Token未配通，智脑归因平滑降级。"
         url = base_url.rstrip('/') + ('/chat/completions' if not base_url.endswith('/chat/completions') else '')
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        prompt = f"""你现在是在华尔街拥有20年资产配置经验的资深买方风控官。下面是合并了场外理财通及积存金后的实盘数据JSON：{json.dumps(payload, ensure_ascii=False)}. 
-                  请基于真实DXY、美债10Y利率走势做出理智的流动性归因解释：
+        prompt = f"""你现在是在华尔街拥有20年资产配置经验的资深买方风控官。下面是合并了场外理财通及积存金后的实盘数据JSON（其中 infusion_rmb 代表每个资产类别绝对需要调整的真实人民币金额，负数代表应减仓，正数代表应补仓）：{json.dumps(payload, ensure_ascii=False)}. 
+                  请做出理智的宏观流动性归因，并下达【带有具体人民币金额的具体操作建议】：
                   1. 美元流动性是在‘放水’还是‘抽血’？对科技与黄金各意味着什么？
-                  2. 结合我的真实合并持仓状况，系统当前下达的硬判词状态是：【{behavior_status}】。请基于此状态从风险控制层面做出冷酷简练的买方专家点评。
-                  请控制在 200 字内，拒绝任何股评废话。"""
+                  2. 结合系统硬判词【{behavior_status}】，给出毫无股评废话的操作指引。如果系统需要调仓，必须明确指出具体的资产名称以及【对应应当加减仓的具体人民币金额（直接提取 JSON 里的 infusion_rmb 绝对值，如：‘卖出黄金1925元’，严禁只报百分比！）】。如果系统处于静默或安全中枢内，则直接明确告知：‘各资产偏离安全，手握现金就地锁死，今天没有任何买卖操作建议。’
+                  请控制在 250 字内，格式清晰，直奔实操主题。"""
         try:
             res = requests.post(url, json={"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.3}, headers=headers, timeout=15)
             if res.status_code == 200: return res.json()['choices'][0]['message']['content']
@@ -125,7 +125,7 @@ class PortfolioDisciplineEngineV26_6_8:
 
     def _build_markdown_report(self, prices, macro_radar, behavior_status, regime_status, dynamic_targets, portfolio_map, odds_matrix, changes_5d, ai_insights):
         fmt_s = lambda k: f"{odds_matrix[k]['samples']} 个样本" if odds_matrix[k]["samples"] >= IRON_LAWS["MIN_HISTORICAL_SAMPLES"] else "⚠️ 样本量不足 (降级参考)"
-        return f"""# 🏛️ LEO'S PORTFOLIO SYSTEM V26.6.8 LTS
+        return f"""# 🏛️ LEO'S PORTFOLIO SYSTEM V26.6.9 LTS
 > **⏰ 自动化审计时间**: `{self.beijing_time.strftime('%Y-%m-%d %H:%M:%S')}`
 ---
 ## 📊 一、 宏观流动性观察站
@@ -250,7 +250,7 @@ class PortfolioDisciplineEngineV26_6_8:
 
         rep_payload = {"audit_date": self.beijing_time.strftime('%Y-%m-%d'), "live_dxy": prices["DXY"], "live_us10y_pct": prices["US10Y"], "assets_status": {k: {"current_pct": portfolio_map[k]["current_pct"], "target_pct": portfolio_map[k]["target_pct"], "infusion_rmb": portfolio_map[k]["infusion"]} for k in RISK_ASSETS}}
         
-        # 🛠️ 绝对修复：将当前作用域内的真实判词 behavior 刚性传导至大模型调用端，实现完美对齐！
+        # 🎯 核心修复：直接把经数理精确核算过的当前状态判词变量传导进去
         ai_insights = self.call_llm_brain_analyser(rep_payload, behavior)
         
         report_content = self._build_markdown_report(prices, macro_radar, behavior, regime_status, dynamic_targets, portfolio_map, odds, changes_5d, ai_insights)
@@ -264,5 +264,5 @@ class PortfolioDisciplineEngineV26_6_8:
                 logger.error(f"❌ 飞书网络发送链路断裂: {e}")
 
 if __name__ == "__main__":
-    agent = PortfolioDisciplineEngineV26_6_8()
+    agent = PortfolioDisciplineEngineV26_6_9()
     agent.run_pipeline()
