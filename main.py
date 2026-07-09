@@ -106,15 +106,16 @@ class PortfolioDisciplineEngineV26_6_7:
         except: pass
         return init_w
 
-    def call_llm_brain_analyser(self, payload):
+   def call_llm_brain_analyser(self, payload, behavior_status):
         api_key, base_url, model = os.environ.get("LLM_API_KEY", ""), os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1"), os.environ.get("LLM_MODEL", "deepseek-chat")
         if not api_key: return "⚠️ 离岸大模型Token未配通，智脑归因平滑降级。"
         url = base_url.rstrip('/') + ('/chat/completions' if not base_url.endswith('/chat/completions') else '')
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+# 🟢 修改为动态判定，彻底封杀 AI 自我打架的逻辑漏洞：
         prompt = f"""你现在是在华尔街拥有20年资产配置经验的资深买方风控官。下面是合并了场外理财通及积存金后的实盘数据JSON：{json.dumps(payload, ensure_ascii=False)}. 
                   请基于真实DXY、美债10Y利率走势做出理智的流动性归因解释：
                   1. 美元流动性是在‘放水’还是‘抽血’？对科技与黄金各意味着什么？
-                  2. 结合我的真实合并持仓状况（有色金属资源已经安全回撤至26.6%，储备现金20.9%），系统为何今天向我发出维持静默、就地修整？
+                  2. 结合我的真实合并持仓状况，系统当前的判词状态是：【{behavior_status}】。请一句话从小组组合风控角度做出极其冷酷的专家归因。
                   请控制在 200 字内，拒绝任何股评废话。"""
         try:
             res = requests.post(url, json={"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.3}, headers=headers, timeout=15)
@@ -249,7 +250,7 @@ class PortfolioDisciplineEngineV26_6_7:
             except: pass
 
         rep_payload = {"audit_date": self.beijing_time.strftime('%Y-%m-%d'), "live_dxy": prices["DXY"], "live_us10y_pct": prices["US10Y"], "assets_status": {k: {"current_pct": portfolio_map[k]["current_pct"], "target_pct": portfolio_map[k]["target_pct"], "infusion_rmb": portfolio_map[k]["infusion"]} for k in RISK_ASSETS}}
-        ai_insights = self.call_llm_brain_analyser(rep_payload)
+        ai_insights = self.call_llm_brain_analyser(rep_payload, behavior)
         
         report_content = self._build_markdown_report(prices, macro_radar, behavior, regime_status, dynamic_targets, portfolio_map, odds, changes_5d, ai_insights)
         print(report_content)
